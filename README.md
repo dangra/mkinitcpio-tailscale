@@ -40,7 +40,7 @@ For busybox based initramfs, it is recommended to place it after any network rel
 
 The Tailscale daemon can run a builtin SSH server, if enabled, installing _dropbear_ or _tinyssh_ isn't required to access the node remotely.
 
-To enable it pass `--ssh` option like in: `setup-initcpio-tailscale -- --ssh`
+To enable it pass `--ssh` option like in: `setup-initcpio-tailscale --ssh`
 
 The main difference of the builtin SSH server to something like _dropbear_ or _tinyssh_ is that the former is only accessible over the tailnet,
 the node won't respond to local connections unless the client is also connected to the tailscale network. It is a good thing though. 
