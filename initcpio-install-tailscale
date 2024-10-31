@@ -20,7 +20,7 @@ build() {
 	add_module tun
 	add_full_dir /usr/lib/xtables
 	add_all_modules netfilter
-	map add_binary iptables ip6tables tailscale tailscaled
+	map add_binary getent iptables ip6tables tailscale tailscaled
 
 	if [[ $(type -t add_systemd_unit ) == function ]]; then
 		add_systemd_unit tailscaled.service

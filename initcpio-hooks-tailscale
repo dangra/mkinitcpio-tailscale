@@ -4,6 +4,9 @@ run_hook() (
   echo "Starting Tailscale"
   . /etc/default/tailscaled
 
+  mkdir /dev/pts
+  mount -t devpts none /dev/pts
+
   # Launch tailscale agent in the background
   /usr/sbin/tailscaled --cleanup
   /usr/sbin/tailscaled \
