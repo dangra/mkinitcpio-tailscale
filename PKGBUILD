@@ -1,7 +1,7 @@
 # Maintainer:  Daniel Graña <dangra at gmail dot com>
 
 pkgname=mkinitcpio-tailscale
-pkgver=0.4
+pkgver=1.0
 pkgrel=1
 pkgdesc="mkinitcpio hook to launch Tailscale on systemd or busybox based initramfs"
 arch=("any")
@@ -11,8 +11,8 @@ depends=("mkinitcpio")
 source=("initcpio-hooks-tailscale"
         "initcpio-install-tailscale"
         "setup-initcpio-tailscale")
-sha256sums=('55177e12c2292665ca86a9235d17e61f7ad080d2ed236e7de60be048116d2f15'
-            '60ebfa2d0a557d0b951a3a3cec01023acbb24feb55c986561e5c8e94bec1a77f'
+sha256sums=('ce5df937e08ee7791921aad719413640aca445083694b2f526008a8ad53d4155'
+            'e16ffdc2ab0f46ff66f2fe09ed0d20193075ae6395451728bcece842fe02228d'
             'e6cf49ea9ac359d21665444c2a3ab009aedb52d215e47287ecff7d6d4159d4c2')
 
 package() {
