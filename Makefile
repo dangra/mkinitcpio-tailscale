@@ -16,3 +16,5 @@ checksums:
 srcinfo:
 	makepkg --printsrcinfo >.SRCINFO
 
+publish:
+	git push ssh://aur@aur.archlinux.org/mkinitcpio-tailscale.git
