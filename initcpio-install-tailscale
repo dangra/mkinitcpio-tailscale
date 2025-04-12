@@ -22,16 +22,16 @@ build() {
 	add_all_modules netfilter
 	map add_binary getent iptables ip6tables tailscale tailscaled
 
-	if [[ $(type -t add_systemd_unit ) == function ]]; then
+	if [[ $(type -t add_systemd_unit) == function ]]; then
 		add_systemd_unit tailscaled.service
 		add_systemd_drop_in tailscaled.service override <<-EOU
-		[Unit]
-		DefaultDependencies=no
-		After=network-online.target
-		Wants=network-online.target
+			[Unit]
+			DefaultDependencies=no
+			After=network-online.target
+			Wants=network-online.target
 		EOU
 		add_symlink /etc/systemd/system/sysinit.target.wants/tailscaled.service \
-								/usr/lib/systemd/system/tailscaled.service
+			/usr/lib/systemd/system/tailscaled.service
 	else
 		add_runscript
 	fi
@@ -39,22 +39,22 @@ build() {
 
 help() {
 	cat <<-__EOF_HELP__
-	This hook enables tailscale service within initramfs.
+		This hook enables tailscale service within initramfs.
 
-	It copies all required files and binaries to initramfs and runs the Tailscale agent.
-	Configuration is copied from the host into the initramfs per:
-	
-		* /etc/initcpio/tailscale/tailscaled.state to /var/lib/tailscale/tailscaled.state
+		It copies all required files and binaries to initramfs and runs the Tailscale agent.
+		Configuration is copied from the host into the initramfs per:
 
-		* /etc/initcpio/tailscale/default.env to /etc/default/tailscaled
+			* /etc/initcpio/tailscale/tailscaled.state to /var/lib/tailscale/tailscaled.state
 
-	It works with both, systemd and busybox init systems; whatever you choose remember to also configure network and a ssh server hooks.
+			* /etc/initcpio/tailscale/default.env to /etc/default/tailscaled
 
-	For systemd init, see 'sd-network' and 'sd-tinyssh' hooks provided by mkinitcpio-systemd-extras package.
+		It works with both, systemd and busybox init systems; whatever you choose remember to also configure network and a ssh server hooks.
 
-	Run /usr/bin/setup-initcpio-tailscale if you haven't already to initialize the configuration files at /etc/initcpio/tailscale/.
+		For systemd init, see 'sd-network' and 'sd-tinyssh' hooks provided by mkinitcpio-systemd-extras package.
 
-	For more check https://github.com/dangra/mkinitcpio-tailscale
+		Run /usr/bin/setup-initcpio-tailscale if you haven't already to initialize the configuration files at /etc/initcpio/tailscale/.
+
+		For more check https://github.com/dangra/mkinitcpio-tailscale
 	__EOF_HELP__
 }
 

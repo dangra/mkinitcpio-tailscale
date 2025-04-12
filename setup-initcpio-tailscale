@@ -7,7 +7,7 @@ TS_STATEDIR=/etc/initcpio/tailscale
 PID=""
 
 usage() {
-    cat <<EOF
+  cat <<EOF
 ${CMD0} launches and configures Tailscale daemon in an isolated environment that doesn't mess with the system service.
 
 usage: ${CMD0} [option...]
@@ -25,9 +25,12 @@ If in doubt, run '$CMD0' without arguments.
 EOF
 }
 
-info()  { printf >&2 "${CMD0} INFO : %s\n" "$1"; }
+info() { printf >&2 "${CMD0} INFO : %s\n" "$1"; }
 error() { printf >&2 "${CMD0} ERROR: %s\n" "$1"; }
-die()   { error "$@"; exit 1; }
+die() {
+  error "$@"
+  exit 1
+}
 
 cleanup() {
   if [[ -n "${SETUPDIR}" ]]; then
@@ -49,7 +52,7 @@ for arg in "$@"; do
   fi
   if [[ $arg =~ ^--hostname= ]]; then
     TS_HOSTNAME=${arg#*=}
-    TS_HOSTNAME=${TS_HOSTNAME//[\"\']}
+    TS_HOSTNAME=${TS_HOSTNAME//[\"\']/}
     FOUND_HOSTNAME_IN_ARGS=yes
   fi
 done
@@ -73,7 +76,6 @@ if ! tailscale --socket="$socket" up --qr --accept-risk=lose-ssh "$@"; then
   cp -f "${SETUPDIR}/setup.log" /tmp/setup-initcpio-tailscale-daemon.log
   die "Failed to configure tailscale. Check daemon logs at /tmp/setup-initcpio-tailscale-daemon.log"
 fi
-
 
 [[ "$(id -u)" != 0 ]] && xsu=sudo || xsu=""
 $xsu install -o root -g root -m600 -d "${TS_STATEDIR}"
