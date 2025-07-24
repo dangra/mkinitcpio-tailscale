@@ -15,6 +15,10 @@ build() {
 	done
 	add_file ${setupdir}/default.env /etc/default/tailscaled
 	add_file ${setupdir}/tailscaled.state /var/lib/tailscale/tailscaled.state
+	add_dir /var/lib/tailscale/ssh
+	for fn in ${setupdir}/etc/ssh/*; do
+		add_file "$fn" /var/lib/trailscale/ssh/$(basename "$fn")
+	done
 
 	# tailscale requirements
 	add_module tun

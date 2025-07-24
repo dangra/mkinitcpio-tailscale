@@ -45,6 +45,7 @@ trap "cleanup" EXIT
 
 # Scan arguments looking for --hostname=VALUE
 FOUND_HOSTNAME_IN_ARGS=no
+FOUND_SSH_IN_ARGS=no
 for arg in "$@"; do
   if [[ $arg =~ ^(-h|--help|help)$ ]]; then
     usage
@@ -55,8 +56,15 @@ for arg in "$@"; do
     TS_HOSTNAME=${TS_HOSTNAME//[\"\']/}
     FOUND_HOSTNAME_IN_ARGS=yes
   fi
+  if [[ $arg =~ ^--ssh$ ]]; then
+    FOUND_SSH_IN_ARGS=yes
+  fi
 done
 [[ $FOUND_HOSTNAME_IN_ARGS == yes ]] || set -- --hostname="$TS_HOSTNAME" "$@"
+
+if [[ $FOUND_SSH_IN_ARGS == yes && ]]; then
+  ssh-keygen -A -f "${TS_STATEDIR}"
+fi
 
 SETUPDIR="$(mktemp -d)"
 socket="${SETUPDIR}/tailscaled.sock"
