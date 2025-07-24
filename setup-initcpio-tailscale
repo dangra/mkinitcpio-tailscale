@@ -45,6 +45,7 @@ trap "cleanup" EXIT
 
 # Scan arguments looking for --hostname=VALUE
 FOUND_HOSTNAME_IN_ARGS=no
+FOUND_SSH_IN_ARGS=no
 for arg in "$@"; do
   if [[ $arg =~ ^(-h|--help|help)$ ]]; then
     usage
@@ -55,12 +56,20 @@ for arg in "$@"; do
     TS_HOSTNAME=${TS_HOSTNAME//[\"\']/}
     FOUND_HOSTNAME_IN_ARGS=yes
   fi
+  if [[ $arg =~ ^--ssh$ ]]; then
+    FOUND_SSH_IN_ARGS=yes
+  fi
 done
 [[ $FOUND_HOSTNAME_IN_ARGS == yes ]] || set -- --hostname="$TS_HOSTNAME" "$@"
 
 SETUPDIR="$(mktemp -d)"
 socket="${SETUPDIR}/tailscaled.sock"
 state="${SETUPDIR}/tailscaled.state"
+
+if [[ $FOUND_SSH_IN_ARGS == yes ]]; then
+  mkdir -p ${SETUPDIR}/etc/ssh
+  ssh-keygen -A -f "${SETUPDIR}"
+fi
 
 tailscaled \
   -state="$state" \
@@ -90,6 +99,11 @@ PORT="41641"
 # Extra flags you might want to pass to tailscaled.
 FLAGS=""
 EOF
+
+if [[ -d "${SETUPDIR}/etc/ssh" ]]; then
+  $xsu install -o root -g root -m600 -Dt "${TS_STATEDIR}/ssh" "${SETUPDIR}/etc/ssh/"ssh_host_*_key
+  $xsu install -o root -g root -m644 -Dt "${TS_STATEDIR}/ssh" "${SETUPDIR}/etc/ssh/"ssh_host_*_key.pub
+fi
 
 info "tailscale successfully configured.
 

@@ -16,6 +16,13 @@ build() {
 	add_file ${setupdir}/default.env /etc/default/tailscaled
 	add_file ${setupdir}/tailscaled.state /var/lib/tailscale/tailscaled.state
 
+	# Copy ssh host keys if they exist
+	if [[ -d ${setupdir}/ssh ]]; then
+		for f in $(ls -A ${setupdir}/ssh); do
+			add_file ${setupdir}/ssh/${f} /var/lib/tailscale/ssh/
+		done
+	fi
+
 	# tailscale requirements
 	add_module tun
 	add_full_dir /usr/lib/xtables
