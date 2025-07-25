@@ -1,74 +1,77 @@
 # mkinitcpio-tailscale
 
-Provide a [mkinitcpio][1] hook to connect to a [Tailscale][2] network at boot,
-from within the initramfs also known as the early userspace environment, just
-before handing over control to the final rootfs.
+This project provides a [mkinitcpio][1] hook that allows you to connect to
+your [Tailscale][2] network during the boot process from within the initramfs
+(the early userspace environment, just before the system switches to the
+final root filesystem).
 
-This hook is extremely handy for remote unlocking systems with an encrypted root
-filesystem. Read the Archlinux Wiki on how to configure mkinitcpio to
-[decrypt the rootfs on boot][3] and how to add a ssh server to
-[remotely unlock it][4].
+It’s particularly useful for remotely unlocking systems with encrypted root
+filesystems. For setup, see the Archlinux Wiki for details on configuring
+mkinitcpio to [decrypt the rootfs][3] on boot and how to add an SSH server to
+[remotely unlock it][4]. You don't need to install any additional SSH server
+if you use the built-in tailscale SSH server, continue reading for details.
 
 [1]: https://wiki.archlinux.org/title/Mkinitcpio
 [2]: https://tailscale.com
 [3]: https://wiki.archlinux.org/title/dm-crypt/Encrypting_an_entire_system#Configuring_mkinitcpio_2
 [4]: https://wiki.archlinux.org/title/Dm-crypt/Specialties#Remote_unlocking_of_root_(or_other)_partition
 
-Combine that with Tailscale and you get a secure VPN to access your locked
-server from anywhere, without having to open a firewall hole to ssh from outside
-your home.
+By combining mkinitcpio with Tailscale, you gain a secure VPN connection to
+access your locked server from anywhere. No need to expose SSH to the internet
+or open firewall ports beyond your home.
 
 ## Installation
 
-Install
+You can install the
 [mkinitcpio-tailscale](https://aur.archlinux.org/packages/mkinitcpio-tailscale)
-package from AUR using your preferred helper, i.e.:
+package from the AUR with your preferred helper, for example:
 
-```
+```sh
 yay -S mkinitcpio-tailscale
 ```
 
 ## Configure
 
-Run `setup-initcpio-tailscale` and follow the instructions. It will register a
-Tailscale node with a hostname derived from the host system, let's say the host
-is named `homeserver`, the Tailscale node will be registered as
-`homeserver-initrd`; that makes it easier to later identify the node in
-Tailscale panel.
+Run `setup-initcpio-tailscale` and follow the prompts. This will register a
+new Tailscale node using a hostname based on your system. If your host is
+named `homeserver`, the Tailscale node will appear as `homeserver-initrd`.
+This makes it easy to identify your node in the Tailscale admin panel.
 
-Edit /etc/mkinitcpio.conf and add `tailscale` to HOOKS array.
+Next, edit `/etc/mkinitcpio.conf`` and add`tailscale` to HOOKS array.
 
-For systemd-based initramfs, the insertion order of the `tailscale` hook doesn't
-matter as long as it is after `systemd` hook itself.
+* For systemd-based initramfs, you can place the `tailscale` hook anywhere
+  after the `systemd` hook.
 
-For busybox-based initramfs, it is recommended to place it after any network
-related hook and before any blocking hook like `encrypt` or `encryptssh`
+* For busybox-based initramfs, add it after any network-related hooks but
+  before blocking hooks like `encrypt` or `encryptssh`.
 
 ### Tailscale SSH server
 
-The Tailscale daemon can run a builtin SSH server. If enabled, installing
-_dropbear_ or _tinyssh_ isn't required to access the node remotely.
+The Tailscale daemon has a built-in SSH server. If enabled, you don’t need to
+install `dropbear` or `tinyssh` to remotely access your node.
 
-To enable it, pass the `--ssh` option like this:
+To enable the built-in SSH server, use the `--ssh` flag:
+
 `setup-initcpio-tailscale --ssh`
 
-The main difference between the builtin SSH server and something like _dropbear_
-or _tinyssh_ is that the Tailscale SSH server is only accessible over the
-tailnet. The node won't respond to local connections unless the client is also
-connected to the tailscale network, which provides better security.
+Unlike traditional SSH servers such as `dropbear` or `tinyssh`, the Tailscale
+SSH server only accepts connections from your tailnet. The node won’t allow
+local connections unless the client is also part of your Tailscale network,
+providing an extra layer of security.
 
 ## Security Considerations
 
-The _Tailscale node key_ will be stored in plaintext inside the initramfs. Even
-if the root filesystem is encrypted, remember that the initramfs isn't. Someone
-with physical access to the node could steal the tailscale keys and attempt to
-log into the tailscale network impersonating the node the keys were created for.
+The Tailscale node key is stored in plaintext inside the initramfs. Even if
+your root filesystem is encrypted, the initramfs itself usually isn’t.
+Physical access to the machine could allow an attacker to steal the Tailscale
+keys and impersonate your node on the Tailscale network.
 
-To minimize the attack surface, we can limit the initramfs tailscale node to
-only accept incoming connections by adding the following
-[Tailscale ACL](https://login.tailscale.com/admin/acls) and tag clients, servers
-and initrd nodes accordingly using the
-[Tailscale Machines](https://login.tailscale.com/admin/machines) panel.
+To mitigate risk, restrict the initramfs Tailscale node to only accept
+incoming connections by setting up Tailscale [ACLs][ts-acls] and tagging your clients,
+servers, and initrd nodes in the [Machines panel][ts-panel].
+
+[ts-acls]: https://login.tailscale.com/admin/acls
+[ts-panel]: https://login.tailscale.com/admin/machines
 
 ```json
 {
@@ -85,19 +88,20 @@ and initrd nodes accordingly using the
 }
 ```
 
-Even if the attacker manages to get the node keys, it won't be able to escalate
-into your tailscale network and all other nodes will be unreacheable.
+Even if an attacker obtains your node keys, these restrictions will prevent
+them from accessing the rest of your Tailscale network. Other nodes will
+remain protected.
 
 ## Prior work and big thanks
 
-- [@tavianator][gh1] and his early work on
+* [@tavianator][gh1] and his early work on
   <https://gist.github.com/tavianator/6b00355cedae0b2ceb338e43ce8e5c1a>
-- [@karepker][gh2] for a very detailed rootfs unlocking on
+* [@karepker][gh2] for a very detailed rootfs unlocking on
   [Raspeberry Pi + Archlinux](https://karepker.com/raspberry-pi/)
-- [@classabbyamp][gh3] for a similar
+* [@classabbyamp][gh3] for a similar
   [mkinitcpio hook](https://github.com/classabbyamp/mkinitcpio-tailscale) for
   non systemd initramfs on Void Linux. Also for the tailscale ACLs idea!
-- [@wolegis][gh4] for
+* [@wolegis][gh4] for
   [mkinitcpio-systemd-extras](https://github.com/wolegis/mkinitcpio-systemd-extras/)
   that served as major inspiration for my systemd hook
 
