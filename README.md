@@ -84,7 +84,16 @@ servers, and initrd nodes in the [Machines panel][ts-panel].
   "acls": [
     { "action": "accept", "src": ["tag:client"], "dst": ["*:*"] },
     { "action": "accept", "src": ["tag:server"], "dst": ["tag:server:*"] }
-  ]
+  ],
+
+  ssh: [
+    {
+        "action": "accept",
+        "src":    ["tag:client"],
+        "dst":    ["tag:initrd"],
+        "users":  ["autogroup:nonroot", "root"],
+    },
+  ],
 }
 ```
 
