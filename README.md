@@ -37,7 +37,7 @@ Tailscale node using a hostname based on your system. If your host is named
 `homeserver`, the Tailscale node will appear as `homeserver-initrd`. This makes
 it easy to identify your node in the Tailscale admin panel.
 
-Next, edit `/etc/mkinitcpio.conf` and add``tailscale` to HOOKS array.
+Next, edit `/etc/mkinitcpio.conf` and add `tailscale` to HOOKS array.
 
 - For systemd-based initramfs, you can place the `tailscale` hook anywhere after
   the `systemd` hook.
