@@ -2,21 +2,34 @@
 # End-to-end boot test.
 #
 # Stands up a throwaway headscale control server, runs the real
-# setup-initcpio-tailscale against it to produce a genuine node key, builds an
-# initramfs with the hook, boots it under QEMU, and then asserts from
-# headscale's side that the initrd node registered and came online.
+# setup-initcpio-tailscale against it to produce genuine node keys and Tailscale
+# SSH host keys, builds an initramfs with the hook, boots it under QEMU, and
+# then asserts from outside the guest that the initrd node registered, came
+# online, and answers an SSH session whose host key is the one setup generated.
 #
 # That chain is the only thing that proves what the package actually claims:
 # state copied into the image -> tailscaled started inside the initramfs ->
-# network up -> node reachable on the tailnet. It also gives
-# setup-initcpio-tailscale its only coverage, via the non-interactive
-# --authkey path.
+# network up -> node reachable on the tailnet -> reachable *as the same host*
+# a client already knows. It also gives setup-initcpio-tailscale its only
+# coverage, via the non-interactive --authkey --ssh path.
+#
+# One boot per branch of the install hook, since the two produce genuinely
+# different images and the runtime hook only runs in the second:
+#
+#   systemd   HOOKS=(base systemd ... tailscale)   tailscaled.service
+#   busybox   HOOKS=(base udev ... tailscale)      initcpio-hooks-tailscale
+#
+# Both register with --ssh: that state is a superset of the plain one, so two
+# boots cover both branches and the ssh path. The images also carry the two
+# test-only hooks under tests/initcpio -- testnet for an address on QEMU's
+# user-mode network, testuser for the login the ssh assertions use.
 #
 # This is the most environment-sensitive script in the suite; every external
 # moving part is parameterised below.
 #
-#   --installed   test /usr/lib/initcpio/... and /usr/bin/setup-initcpio-tailscale
-#                 from the built package instead of the working tree
+#   --installed         test /usr/lib/initcpio/... and /usr/bin/setup-initcpio-tailscale
+#                       from the built package instead of the working tree
+#   systemd | busybox   boot only the named scenarios (or set BOOT_SCENARIOS)
 # shellcheck source-path=SCRIPTDIR
 set -uo pipefail
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
@@ -34,27 +47,80 @@ if [[ -z ${HEADSCALE_SHA256:-} && $HEADSCALE_VERSION == "$HEADSCALE_PINNED_VERSI
 fi
 
 BOOT_TIMEOUT=${BOOT_TIMEOUT:-300}
+# tailscaled reads as online before its SSH listener is necessarily up, so the
+# first ssh attempt is retried rather than asserted on the spot.
+SSH_TIMEOUT=${SSH_TIMEOUT:-90}
 TS_NODE_NAME=${TS_NODE_NAME:-ci-initrd}
+# The login the session is opened as. Not root, and not a free choice: see
+# tests/initcpio/install/testuser, which adds it to the image and explains why
+# headscale cannot authorise a root session. Keep the two in step.
+SSH_USER=${SSH_USER:-citest}
+
+# --- scenarios ------------------------------------------------------------
+# The bogus root UUID doubles as the marker that proves an ssh session landed
+# in the guest this scenario booted, so it differs per scenario.
+# testuser comes after tailscale: it appends to whatever user database the image
+# already has, and on the busybox side that database is written by the tailscale
+# hook itself.
+declare -A SC_HOOKS=(
+	[systemd]='base systemd testnet tailscale testuser'
+	[busybox]='base udev testnet tailscale testuser'
+)
+declare -A SC_SUFFIX=([systemd]=sd [busybox]=bb)
+declare -A SC_ROOT=(
+	[systemd]=deadbeef-0000-0000-0000-000000000001
+	[busybox]=deadbeef-0000-0000-0000-000000000002
+)
+# Evidence from inside the guest that the hook ran, per branch: the unit on one
+# side, the runtime hook's own first line on the other.
+declare -A SC_CONSOLE=(
+	[systemd]='Started Tailscale node agent|tailscaled'
+	[busybox]='Starting Tailscale'
+)
+
+# mkinitcpio's init drops into an interactive rescue shell once it gives up on
+# the root device. With -serial file: that shell reads EOF, exits as PID 1 and
+# panics the guest, so the busybox scenario parks in poll_device instead --
+# rootdelay outlives the test, which is the busybox analogue of systemd waiting
+# forever on a device that never appears.
+declare -A SC_APPEND=(
+	[systemd]=''
+	[busybox]="rootdelay=$((BOOT_TIMEOUT + 120))"
+)
 
 USE_INSTALLED=0
-[[ ${1:-} == --installed ]] && USE_INSTALLED=1
+SCENARIOS=()
+for arg in "$@"; do
+	case $arg in
+	--installed) USE_INSTALLED=1 ;;
+	systemd | busybox) SCENARIOS+=("$arg") ;;
+	*) die "unknown argument: $arg (expected --installed, systemd or busybox)" ;;
+	esac
+done
+if ((${#SCENARIOS[@]} == 0)); then
+	# shellcheck disable=SC2206 # a space separated override is the point
+	SCENARIOS=(${BOOT_SCENARIOS:-systemd busybox})
+fi
 
 need_root
-need_cmd mkinitcpio qemu-system-x86_64 curl jq depmod ssh-keygen
+need_cmd mkinitcpio qemu-system-x86_64 curl jq depmod ssh ssh-keygen
 need_pkg tailscale iptables
 
 WORK=$(mktemp -d)
 QEMU_PID=''
 HEADSCALE_PID=''
+CLIENT_PID=''
+CLIENT_SOCK="$WORK/client.sock"
+CLIENT_NAME=${CLIENT_NAME:-ci-client}
 
 cleanup_all() {
 	local rc=$?
 	[[ -n $QEMU_PID ]] && kill "$QEMU_PID" 2>/dev/null
+	[[ -n $CLIENT_PID ]] && kill "$CLIENT_PID" 2>/dev/null
 	[[ -n $HEADSCALE_PID ]] && kill "$HEADSCALE_PID" 2>/dev/null
 	if [[ -n ${ARTIFACT_DIR:-} ]]; then
 		install -d "$ARTIFACT_DIR"
-		cp "$WORK/console.log" "$WORK/console.txt" "$WORK/headscale.log" "$WORK/mkinitcpio.log" \
-			"$WORK/setup.log" "$ARTIFACT_DIR/" 2>/dev/null || true
+		cp "$WORK"/*.log "$WORK"/*.txt "$ARTIFACT_DIR/" 2>/dev/null || true
 	fi
 	rm -rf "$WORK"
 	fixtures_cleanup
@@ -77,10 +143,13 @@ else
 	install -m644 "$REPO_ROOT/initcpio-install-tailscale" "$HOOKDIR/install/tailscale"
 	install -m644 "$REPO_ROOT/initcpio-hooks-tailscale" "$HOOKDIR/hooks/tailscale"
 	install -m644 "$REPO_ROOT/tests/initcpio/install/testnet" "$HOOKDIR/install/testnet"
+	install -m644 "$REPO_ROOT/tests/initcpio/install/testuser" "$HOOKDIR/install/testuser"
+	install -m644 "$REPO_ROOT/tests/initcpio/hooks/testnet" "$HOOKDIR/hooks/testnet"
 	SETUP_HELPER="$REPO_ROOT/setup-initcpio-tailscale"
 	info 'testing the working tree'
 fi
 [[ -x $SETUP_HELPER ]] || die "setup helper not executable: $SETUP_HELPER"
+info "scenarios: ${SCENARIOS[*]}"
 
 # --- kernel ---------------------------------------------------------------
 KVER=''
@@ -196,33 +265,321 @@ if [[ -z $AUTHKEY || $AUTHKEY == *rror* ]]; then
 fi
 [[ -n $AUTHKEY ]] || die 'could not create a headscale pre-auth key'
 pass 'headscale issued a pre-auth key'
-endgroup
 
-# --- the real setup helper ------------------------------------------------
-group 'setup-initcpio-tailscale against headscale'
-if "$SETUP_HELPER" \
-	--hostname="$TS_NODE_NAME" \
-	--login-server="$SERVER_URL" \
-	--authkey="$AUTHKEY" >"$WORK/setup.log" 2>&1; then
-	pass 'setup-initcpio-tailscale registers a node'
+# Tailscale SSH is authorised by policy, not by keys, so without an ssh rule the
+# node would refuse every session no matter how healthy it is. Everything here
+# belongs to the single user 'ci', hence the user@ form on both sides; the login
+# the rule grants is the unprivileged one tests/initcpio/install/testuser adds,
+# which is also where the reason it cannot be root is written down.
+cat >"$WORK/policy.json" <<-EOF
+	{
+	  "acls": [
+	    { "action": "accept", "src": ["ci@"], "dst": ["*:*"] }
+	  ],
+	  "ssh": [
+	    {
+	      "action": "accept",
+	      "src": ["ci@"],
+	      "dst": ["ci@"],
+	      "users": ["${SSH_USER}"]
+	    }
+	  ]
+	}
+EOF
+if hs policy set -f "$WORK/policy.json" >"$WORK/policy.log" 2>&1; then
+	pass 'headscale accepted the ssh policy'
 else
-	fail 'setup-initcpio-tailscale registers a node' "$(cat "$WORK/setup.log")"
-	summary
-	exit 1
+	fail 'headscale accepted the ssh policy' "$(cat "$WORK/policy.log")"
 fi
-
-check 'setup wrote tailscaled.state' test -s "$TS_SETUPDIR/tailscaled.state"
-check 'setup wrote default.env' test -s "$TS_SETUPDIR/default.env"
+endgroup
 
 node_known() {
 	hs nodes list -o json 2>/dev/null |
-		jq -e --arg n "$TS_NODE_NAME" '.[] | select(.given_name==$n)' >/dev/null
+		jq -e --arg n "$1" '.[] | select(.given_name==$n)' >/dev/null
 }
-check 'the node is registered with headscale' node_known
+
+node_online() {
+	hs nodes list -o json 2>/dev/null |
+		jq -e --arg n "$1" '.[] | select(.given_name==$n) | select(.online==true)' >/dev/null
+}
+
+node_ip() {
+	hs nodes list -o json 2>/dev/null |
+		jq -r --arg n "$1" '.[] | select(.given_name==$n) | .ip_addresses[]' 2>/dev/null |
+		grep -m1 -E '^100\.'
+}
+
+# --- the real setup helper ------------------------------------------------
+# Every scenario is registered before any image is built, so the setup-time
+# sessions of the later scenarios expire while the first one boots rather than
+# stalling each boot in turn.
+group 'setup-initcpio-tailscale against headscale'
+for sc in "${SCENARIOS[@]}"; do
+	node="${TS_NODE_NAME}-${SC_SUFFIX[$sc]}"
+
+	rm -rf "$TS_SETUPDIR"
+	if "$SETUP_HELPER" \
+		--hostname="$node" \
+		--login-server="$SERVER_URL" \
+		--authkey="$AUTHKEY" \
+		--ssh >"$WORK/setup.$sc.log" 2>&1; then
+		pass "$sc: setup-initcpio-tailscale registers $node"
+	else
+		fail "$sc: setup-initcpio-tailscale registers $node" "$(cat "$WORK/setup.$sc.log")"
+		summary
+		exit 1
+	fi
+
+	check "$sc: setup wrote tailscaled.state" test -s "$TS_SETUPDIR/tailscaled.state"
+	check "$sc: setup wrote default.env" test -s "$TS_SETUPDIR/default.env"
+	check "$sc: setup wrote an ed25519 host key" \
+		test -s "$TS_SETUPDIR/ssh/ssh_host_ed25519_key"
+	check "$sc: the private host key is mode 600" \
+		test "$(stat -c %a "$TS_SETUPDIR/ssh/ssh_host_ed25519_key" 2>/dev/null)" = 600
+	check "$sc: the node is registered with headscale" node_known "$node"
+
+	# Keep this scenario's configuration; $TS_SETUPDIR is shared, so it is put
+	# back immediately before the image that needs it is built.
+	cp -a "$TS_SETUPDIR" "$WORK/state.$sc"
+done
 endgroup
 
-# --- build the image ------------------------------------------------------
-group 'build the boot image'
+# --- a client on the tailnet ----------------------------------------------
+# Userspace networking keeps this working in an unprivileged container: no
+# /dev/net/tun, no NET_ADMIN, and reachability comes from `tailscale nc` used as
+# an ssh ProxyCommand. Same shape setup-initcpio-tailscale itself uses.
+group 'join a client to the tailnet'
+tailscaled \
+	-state="$WORK/client.state" \
+	-socket="$CLIENT_SOCK" \
+	-no-logs-no-support \
+	-tun=userspace-networking \
+	>"$WORK/client.log" 2>&1 &
+CLIENT_PID=$!
+
+for _ in $(seq 30); do
+	[[ -S $CLIENT_SOCK ]] && break
+	kill -0 "$CLIENT_PID" 2>/dev/null || break
+	sleep 1
+done
+
+# --accept-risk=lose-ssh for the same reason the setup helper passes it: this is
+# an isolated daemon with its own socket and state, so it cannot disturb the
+# session the suite may be running under.
+if tailscale --socket="$CLIENT_SOCK" up \
+	--login-server="$SERVER_URL" \
+	--authkey="$AUTHKEY" \
+	--hostname="$CLIENT_NAME" \
+	--accept-risk=lose-ssh >"$WORK/client-up.log" 2>&1; then
+	pass 'the ssh client node joined the tailnet'
+else
+	fail 'the ssh client node joined the tailnet' \
+		"$(printf '%s\n%s' "$(cat "$WORK/client-up.log")" "$(tail -20 "$WORK/client.log")")"
+fi
+endgroup
+
+# --- assertions that need a booted guest ----------------------------------
+#
+# Set by run_scenario before the ssh assertions run, because `check` takes a
+# command rather than a closure.
+SSH_SC=''
+SSH_IP=''
+SSH_KNOWN=''
+SSH_MARKER=''
+SSH_OPTS=()
+
+# The guest answers ssh, and it is the guest this scenario booted: /proc/cmdline
+# carries the bogus root= UUID handed to this QEMU invocation and no other.
+ssh_runs_a_command() {
+	local deadline=$((SECONDS + SSH_TIMEOUT)) out rc
+	while :; do
+		out=$(ssh "${SSH_OPTS[@]}" "$SSH_USER@$SSH_IP" cat /proc/cmdline 2>&1)
+		rc=$?
+		((rc == 0)) && break
+		if ((SECONDS >= deadline)); then
+			printf '%s\n' "$out"
+			return "$rc"
+		fi
+		sleep 5
+	done
+	printf '%s\n' "$out"
+	[[ $out == *"$SSH_MARKER"* ]]
+}
+
+# The whole point of copying host keys into the image: the initrd node is not a
+# stranger to a client that already knows the machine. OpenSSH records the key
+# during the handshake, before authentication, so this stays meaningful even
+# when the session itself is refused.
+hostkey_is_the_one_setup_generated() {
+	local want got
+	want=$(ssh-keygen -lf "$WORK/state.$SSH_SC/ssh/ssh_host_ed25519_key.pub" 2>/dev/null |
+		awk '{print $2}')
+	got=$(ssh-keygen -lf "$SSH_KNOWN" 2>/dev/null |
+		awk '$NF == "(ED25519)" {print $2; exit}')
+	printf 'setup generated %s\nguest offered   %s\n' "$want" "${got:-<nothing recorded>}"
+	[[ -n $want && $got == "$want" ]]
+}
+
+run_scenario() {
+	local sc=$1
+	local node="${TS_NODE_NAME}-${SC_SUFFIX[$sc]}"
+	local img="$WORK/initrd.$sc.img" conf="$WORK/mkinitcpio.$sc.conf"
+	local console="$WORK/console.$sc.log" text="$WORK/console.$sc.txt"
+	local root="/dev/disk/by-uuid/${SC_ROOT[$sc]}"
+
+	group "build the $sc boot image"
+	rm -rf "$TS_SETUPDIR"
+	cp -a "$WORK/state.$sc" "$TS_SETUPDIR"
+
+	cat >"$conf" <<-EOF
+		# tun is needed by tailscaled and the virtio drivers by the QEMU NIC.
+		# Listing them in MODULES both includes and autoloads them.
+		MODULES=(tun virtio_net virtio_pci)
+		BINARIES=()
+		FILES=()
+		HOOKS=(${SC_HOOKS[$sc]})
+		COMPRESSION="cat"
+	EOF
+
+	# -D replaces the whole search path, so the stock directory must be named too.
+	if mkinitcpio -n -D "$HOOKDIR" -D /usr/lib/initcpio \
+		-c "$conf" -k "$KVER" -g "$img" >"$WORK/mkinitcpio.$sc.log" 2>&1; then
+		pass "$sc: mkinitcpio builds the boot image"
+	else
+		fail "$sc: mkinitcpio builds the boot image" "$(tail -40 "$WORK/mkinitcpio.$sc.log")"
+		endgroup
+		return 1
+	fi
+	endgroup
+
+	group "boot $sc under QEMU"
+
+	# setup-initcpio-tailscale ran a tailscaled of its own to register the node,
+	# and headscale takes a moment to notice that session ending. Waiting for the
+	# node to read as offline first is what makes the assertion below meaningful:
+	# once it has, coming back online can only be the VM.
+	info "waiting for the setup-time session of $node to drop"
+	for _ in $(seq 24); do
+		node_online "$node" || break
+		sleep 5
+	done
+	if node_online "$node"; then
+		fail "$sc: the node is offline before boot" \
+			'it still reads online, so the boot assertion would be vacuous'
+	else
+		pass "$sc: the node is offline before boot"
+	fi
+
+	info "booting $sc with accel=$ACCEL"
+
+	# No usable root device is provided on purpose. The guest reaches the point
+	# where the hook has run and the network is up, and then waits for a root
+	# filesystem that never appears -- long enough to observe the node from the
+	# control server and log into it.
+	qemu-system-x86_64 \
+		-accel "$ACCEL" \
+		-m 1G -smp 2 \
+		-display none -no-reboot \
+		-kernel "$KERNEL" \
+		-initrd "$img" \
+		-append "console=ttyS0 root=$root rw systemd.log_level=info ${SC_APPEND[$sc]}" \
+		-netdev user,id=n0 \
+		-device virtio-net-pci,netdev=n0 \
+		-serial "file:$console" \
+		>"$WORK/qemu.$sc.log" 2>&1 &
+	QEMU_PID=$!
+
+	local started=$SECONDS deadline=$((SECONDS + BOOT_TIMEOUT)) online=0
+	while ((SECONDS < deadline)); do
+		if node_online "$node"; then
+			online=1
+			break
+		fi
+		if ! kill -0 "$QEMU_PID" 2>/dev/null; then
+			warn "QEMU exited before $node came online"
+			break
+		fi
+		sleep 5
+	done
+
+	if ((online)); then
+		pass "$sc: the initrd node came online after $((SECONDS - started))s"
+	else
+		fail "$sc: the initrd node came online" \
+			"$(printf 'last 40 lines of console:\n%s' "$(tail -40 "$console" 2>/dev/null)")"
+	fi
+
+	# Corroborating evidence from inside the guest, useful when the assertion
+	# above fails and the question is how far the boot actually got. systemd
+	# colours its console output, and the escape sequences land between "Started"
+	# and the unit description, so they have to come out before matching.
+	sed -r 's/\x1B\[[0-9;?]*[a-zA-Z]//g; s/\x1B\][^\x07]*(\x07|\x1B\\)//g' \
+		"$console" >"$text" 2>/dev/null
+
+	if grep -qE "${SC_CONSOLE[$sc]}" "$text"; then
+		pass "$sc: the guest started tailscaled"
+	else
+		fail "$sc: the guest started tailscaled" \
+			"$(printf 'console is %s bytes; last 40 lines (de-escaped):\n%s' \
+				"$(stat -c %s "$console" 2>/dev/null || echo missing)" \
+				"$(tail -40 "$text" 2>/dev/null)")"
+	fi
+
+	if ((online)); then
+		assert_ssh "$sc" "$node"
+	else
+		warn "$sc: skipping the ssh assertions; the node never came online"
+	fi
+
+	kill "$QEMU_PID" 2>/dev/null
+	wait "$QEMU_PID" 2>/dev/null
+	QEMU_PID=''
+	endgroup
+}
+
+assert_ssh() {
+	local sc=$1 node=$2 ip
+	ip=$(node_ip "$node")
+	if [[ -z $ip ]]; then
+		fail "$sc: headscale reports a tailnet address for $node" \
+			"$(hs nodes list 2>&1 | tail -10)"
+		return 0
+	fi
+
+	SSH_SC=$sc
+	SSH_IP=$ip
+	SSH_KNOWN="$WORK/known_hosts.$sc"
+	SSH_MARKER=${SC_ROOT[$sc]}
+	# Nothing here may consult the caller's ssh configuration, agent or keys:
+	# Tailscale SSH authorises by tailnet identity, and any local key material
+	# joining in would only muddy what the result means.
+	SSH_OPTS=(
+		-n
+		-F /dev/null
+		-o BatchMode=yes
+		-o PubkeyAuthentication=no
+		-o IdentityAgent=none
+		-o StrictHostKeyChecking=accept-new
+		-o UserKnownHostsFile="$SSH_KNOWN"
+		-o GlobalKnownHostsFile=/dev/null
+		-o ConnectTimeout=20
+		-o "ProxyCommand=tailscale --socket=$CLIENT_SOCK nc %h %p"
+	)
+	info "$sc: reaching $node at $ip over the tailnet"
+
+	check "$sc: ssh runs a command inside the initramfs" ssh_runs_a_command
+	check "$sc: the ssh host key is the one setup generated" \
+		hostkey_is_the_one_setup_generated
+}
+
+# --- boot -----------------------------------------------------------------
+ACCEL=tcg
+if [[ -r /dev/kvm && -w /dev/kvm ]]; then
+	ACCEL=kvm
+else
+	warn 'no usable /dev/kvm; falling back to TCG emulation (slower)'
+fi
+
 # Kept in $WORK and handed to the hook via TESTNET_CONFIG rather than written
 # to /etc/systemd/network: with ALLOW_UNSAFE=1 this script can be run on a real
 # host, where leaving a DHCP .network file behind would persistently affect
@@ -237,116 +594,8 @@ cat >"$TESTNET_CONFIG" <<-'EOF'
 	DHCP=yes
 EOF
 
-CONF="$WORK/mkinitcpio.conf"
-cat >"$CONF" <<-'EOF'
-	# tun is needed by tailscaled and the virtio drivers by the QEMU NIC.
-	# Listing them in MODULES both includes and autoloads them.
-	MODULES=(tun virtio_net virtio_pci)
-	BINARIES=()
-	FILES=()
-	HOOKS=(base systemd testnet tailscale)
-	COMPRESSION="cat"
-EOF
-
-IMG="$WORK/ci-initrd.img"
-# -D replaces the whole search path, so the stock directory must be named too.
-if mkinitcpio -n -D "$HOOKDIR" -D /usr/lib/initcpio \
-	-c "$CONF" -k "$KVER" -g "$IMG" >"$WORK/mkinitcpio.log" 2>&1; then
-	pass 'mkinitcpio builds the boot image'
-else
-	fail 'mkinitcpio builds the boot image' "$(tail -40 "$WORK/mkinitcpio.log")"
-	summary
-	exit 1
-fi
-endgroup
-
-# --- boot -----------------------------------------------------------------
-group 'boot under QEMU'
-
-node_online() {
-	hs nodes list -o json 2>/dev/null |
-		jq -e --arg n "$TS_NODE_NAME" '.[] | select(.given_name==$n) | select(.online==true)' \
-			>/dev/null
-}
-
-# setup-initcpio-tailscale ran a tailscaled of its own to register the node, and
-# headscale takes a moment to notice that session ending. Waiting for the node
-# to read as offline first is what makes the assertion below meaningful: once
-# it has, coming back online can only be the VM.
-info 'waiting for the setup-time session to drop'
-for _ in $(seq 24); do
-	node_online || break
-	sleep 5
+for sc in "${SCENARIOS[@]}"; do
+	run_scenario "$sc"
 done
-if node_online; then
-	fail 'the node is offline before boot' \
-		'it still reads online, so the boot assertion would be vacuous'
-else
-	pass 'the node is offline before boot'
-fi
-
-ACCEL=tcg
-if [[ -r /dev/kvm && -w /dev/kvm ]]; then
-	ACCEL=kvm
-else
-	warn 'no usable /dev/kvm; falling back to TCG emulation (slower)'
-fi
-info "booting with accel=$ACCEL"
-
-# No usable root device is provided on purpose. systemd still reaches
-# sysinit.target -- which is what pulls in tailscaled.service and networkd --
-# and then waits for a root filesystem that never appears, holding the VM up
-# long enough to observe the node from the control server.
-qemu-system-x86_64 \
-	-accel "$ACCEL" \
-	-m 1G -smp 2 \
-	-display none -no-reboot \
-	-kernel "$KERNEL" \
-	-initrd "$IMG" \
-	-append "console=ttyS0 root=/dev/disk/by-uuid/deadbeef-0000-0000-0000-000000000000 rw systemd.log_level=info" \
-	-netdev user,id=n0 \
-	-device virtio-net-pci,netdev=n0 \
-	-serial "file:$WORK/console.log" \
-	>"$WORK/qemu.log" 2>&1 &
-QEMU_PID=$!
-
-started=$SECONDS
-deadline=$((SECONDS + BOOT_TIMEOUT))
-online=0
-while ((SECONDS < deadline)); do
-	if node_online; then
-		online=1
-		break
-	fi
-	if ! kill -0 "$QEMU_PID" 2>/dev/null; then
-		warn 'QEMU exited before the node came online'
-		break
-	fi
-	sleep 5
-done
-
-if ((online)); then
-	pass "the initrd node came online after $((SECONDS - started))s"
-else
-	fail 'the initrd node came online' \
-		"$(printf 'last 40 lines of console:\n%s' "$(tail -40 "$WORK/console.log" 2>/dev/null)")"
-fi
-
-# Corroborating evidence from inside the guest, useful when the assertion above
-# fails and the question is how far the boot actually got. systemd colours its
-# console output, and the escape sequences land between "Started" and the unit
-# description, so they have to come out before matching.
-sed -r 's/\x1B\[[0-9;?]*[a-zA-Z]//g; s/\x1B\][^\x07]*(\x07|\x1B\\)//g' \
-	"$WORK/console.log" >"$WORK/console.txt" 2>/dev/null
-
-if grep -qE 'Started Tailscale node agent|tailscaled' "$WORK/console.txt"; then
-	pass 'the guest started the tailscaled unit'
-else
-	fail 'the guest started the tailscaled unit' \
-		"$(printf 'console.log is %s bytes; last 40 lines (de-escaped):\n%s' \
-			"$(stat -c %s "$WORK/console.log" 2>/dev/null || echo missing)" \
-			"$(tail -40 "$WORK/console.txt" 2>/dev/null)")"
-fi
-endgroup
 
 summary

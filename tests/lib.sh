@@ -21,7 +21,9 @@ fi
 
 TESTS_RUN=0
 TESTS_FAILED=0
+TESTS_KNOWN=0
 FAILED_NAMES=()
+KNOWN_NAMES=()
 
 info() { printf '%s==> %s%s\n' "$C_BOLD" "$*" "$C_OFF"; }
 warn() { printf '%s==> WARNING: %s%s\n' "$C_YELLOW" "$*" "$C_OFF" >&2; }
@@ -67,12 +69,57 @@ fail() {
 	return 0
 }
 
+# known <description> <reason> — a documented gap, neither a pass nor a failure.
+#
+# Counted separately so a suite that is green still says out loud which promises
+# it is not making.
+known() {
+	TESTS_RUN=$((TESTS_RUN + 1))
+	TESTS_KNOWN=$((TESTS_KNOWN + 1))
+	KNOWN_NAMES+=("$1")
+	printf '  %sxfail%s %s\n' "$C_YELLOW" "$C_OFF" "$1"
+	_detail "known gap: ${2:-no reason given}"
+	if [[ -n ${GITHUB_ACTIONS:-} ]]; then
+		printf '::warning::%s (known gap)\n' "$1"
+	fi
+}
+
+# xfail <description> <reason> <command...> — the command is expected to fail
+#
+# A failure is recorded as a known gap. Success is a hard failure: whatever the
+# gap was has been closed, and the assertion should become a plain `check`.
+xfail() {
+	local desc=$1 reason=$2 out rc
+	shift 2
+	out=$("$@" 2>&1)
+	rc=$?
+	if ((rc != 0)); then
+		known "$desc" "$reason"
+		# Printed rather than swallowed: an expected failure is only evidence of
+		# the gap it claims if the way it fails still matches.
+		_detail "\$ $* (exit $rc)"
+		_detail "$out"
+	else
+		fail "$desc unexpectedly passed" \
+			"the known gap looks fixed -- make this a plain check
+       gap was: $reason"
+		_detail "$out"
+	fi
+}
+
 summary() {
 	printf '\n'
 	if ((TESTS_FAILED)); then
 		printf '%s%d of %d checks failed%s\n' "$C_RED" "$TESTS_FAILED" "$TESTS_RUN" "$C_OFF"
 		printf '  - %s\n' "${FAILED_NAMES[@]}"
+		((TESTS_KNOWN)) && printf '%s%d known gaps%s\n' "$C_YELLOW" "$TESTS_KNOWN" "$C_OFF"
 		return 1
+	fi
+	if ((TESTS_KNOWN)); then
+		printf '%s%d checks passed, %d known gaps%s\n' \
+			"$C_GREEN" "$((TESTS_RUN - TESTS_KNOWN))" "$TESTS_KNOWN" "$C_OFF"
+		printf '  - %s\n' "${KNOWN_NAMES[@]}"
+		return 0
 	fi
 	printf '%s%d checks passed%s\n' "$C_GREEN" "$TESTS_RUN" "$C_OFF"
 	return 0

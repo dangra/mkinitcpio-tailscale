@@ -7,8 +7,17 @@
 # boot test a way to fail for reasons that have nothing to do with this package.
 #
 # It is scaffolding for the test suite and is not part of the shipped package.
+#
+# It branches on the init system the same way initcpio-install-tailscale does,
+# so a single `testnet` entry in HOOKS works for both flavours of image.
 
 build() {
+	if [[ $(type -t add_systemd_unit) != function ]]; then
+		# busybox: hooks/testnet configures the interface itself.
+		add_runscript
+		return 0
+	fi
+
 	add_systemd_unit systemd-networkd.service
 	add_systemd_unit systemd-networkd.socket
 
@@ -31,9 +40,10 @@ build() {
 
 help() {
 	cat <<-__EOF_HELP__
-		Test-only hook. Enables systemd-networkd inside the initramfs and copies a
-		single .network file, so the boot test's guest can get an address from
-		QEMU's user-mode DHCP. Not for production use.
+		Test-only hook. Gives the boot test's guest an address on QEMU's user-mode
+		network: systemd-networkd plus a single .network file on a systemd image,
+		or a runtime hook that configures the interface with busybox ip otherwise.
+		Not for production use.
 	__EOF_HELP__
 }
 

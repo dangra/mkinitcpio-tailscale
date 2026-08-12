@@ -11,7 +11,9 @@ set -uo pipefail
 cd "$REPO_ROOT" || die "cannot cd to $REPO_ROOT"
 
 SCRIPTS=(initcpio-install-tailscale initcpio-hooks-tailscale setup-initcpio-tailscale)
-TEST_SCRIPTS=(tests/*.sh scripts/*.sh)
+# The test-only mkinitcpio hooks end up in real images too, so they are held to
+# the same standard as the shipped ones.
+TEST_SCRIPTS=(tests/*.sh scripts/*.sh tests/initcpio/install/* tests/initcpio/hooks/*)
 
 group 'shellcheck'
 command -v shellcheck >/dev/null 2>&1 ||
@@ -52,8 +54,9 @@ group 'busybox ash syntax'
 # the [[ ]] in run_cleanuphook is fine today -- this check is what keeps that
 # assumption honest if the busybox build options ever change.
 if bb=$(initcpio_busybox); then
-	check 'initcpio-hooks-tailscale parses as busybox ash' \
-		"$bb" ash -n initcpio-hooks-tailscale
+	for f in initcpio-hooks-tailscale tests/initcpio/hooks/*; do
+		check "$f parses as busybox ash" "$bb" ash -n "$f"
+	done
 else
 	warn 'busybox not found; skipping ash syntax check'
 fi

@@ -94,8 +94,9 @@ jobs:
 
       - uses: actions/checkout@v7
 
-      # Builds real images for the systemd, busybox and Tailscale-SSH variants
-      # and asserts on their contents. Uses the hook files from the working tree
+      # Builds real images for the systemd and busybox variants, with and
+      # without Tailscale SSH host keys, plus the guard clauses, and asserts on
+      # their contents. Uses the hook files from the working tree
       # -- the package job separately proves the package ships exactly those
       # files at the paths mkinitcpio looks in.
       - name: Build and inspect initramfs images
@@ -113,7 +114,9 @@ jobs:
   boot:
     name: boot
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Two boots -- systemd and busybox -- and a runner without KVM falls back to
+    # TCG, where each one can take the full BOOT_TIMEOUT.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 
@@ -121,7 +124,7 @@ jobs:
       # --device /dev/kvm when the device exists, so a runner without KVM falls
       # back to TCG instead of failing at container creation. It also keeps this
       # identical to how the test runs locally.
-      - name: Boot the initramfs under QEMU against a throwaway headscale
+      - name: Boot the systemd and busybox images against a throwaway headscale
         run: ./tests/container.sh 04
         env:
           # Runners ship both engines; docker runs rootful here, which is what
