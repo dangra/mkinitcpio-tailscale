@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [master, main]
+    # Branch work is covered by pull_request; listing every branch here as well
+    # would run the whole suite twice for any branch with a PR open.
+    branches: [master]
     # A release is a tag push, handled by the publish job below. Keeping it in
     # this workflow means the release runs the same jobs as everything else,
     # rather than a separate copy that only executes a few times a year.
@@ -134,7 +136,8 @@ jobs:
           path: logs/
           if-no-files-found: ignore
 
-  # The release path, run on every push and pull request.
+  # The release path. Runs wherever this workflow does: pull requests, pushes to
+  # master, and v* tags.
   #
   # For anything that is not a v* tag this is a dry run: it stages the tree,
   # clones the live AUR over HTTPS -- which is anonymous, so no credentials are
@@ -143,8 +146,8 @@ jobs:
   #
   # Deliberately one job rather than a dry-run job here and a release job in a
   # separate workflow. The path that publishes is then exactly the path
-  # exercised on every commit; a second, near-identical copy that runs a few
-  # times a year is how a release breaks unnoticed.
+  # exercised by every pull request; a second, near-identical copy that runs a
+  # few times a year is how a release breaks unnoticed.
   publish:
     name: publish
     # Never push on red tests. This also gates the dry run, which costs about a

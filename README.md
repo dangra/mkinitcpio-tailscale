@@ -164,10 +164,11 @@ That runs the full test suite and, only if it passes, publishes to the AUR: a
 curated tree of packaging files only, never `tests/` or `.github/`. Use
 `v<version>-<rel>` for a packaging-only rebuild of a version already published.
 
-Every push and pull request runs the same release path in dry-run mode against
-the live AUR repository — which clones anonymously over HTTPS, so no credentials
-are involved — and prints the diff it would push. The publish logic is therefore
-exercised continuously rather than only during a release.
+Every pull request, and every push to `master`, runs the same release path in
+dry-run mode against the live AUR repository — which clones anonymously over
+HTTPS, so no credentials are involved — and prints the diff it would push. The
+publish logic is therefore exercised continuously rather than only during a
+release.
 
 To rehearse locally:
 
