@@ -11,7 +11,7 @@ set -uo pipefail
 cd "$REPO_ROOT" || die "cannot cd to $REPO_ROOT"
 
 SCRIPTS=(initcpio-install-tailscale initcpio-hooks-tailscale setup-initcpio-tailscale)
-TEST_SCRIPTS=(tests/*.sh)
+TEST_SCRIPTS=(tests/*.sh scripts/*.sh)
 
 group 'shellcheck'
 command -v shellcheck >/dev/null 2>&1 ||

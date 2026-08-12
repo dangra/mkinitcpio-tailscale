@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Packaging checks: metadata drift, a real makepkg build, namcap, and payload
-# assertions on the resulting package.
+# Packaging checks, run against the staged release tree rather than the repo.
 #
-# Everything happens in a temporary copy of the sources, so this never dirties
-# the working tree -- which also means the drift checks work without git.
+# PKGBUILD here is a template -- pkgver, pkgrel and sha256sums are placeholders
+# and .SRCINFO is untracked -- so there is no metadata drift left to check for.
+# What matters instead is that scripts/aur-stage.sh produces a complete, correct
+# package definition, since that tree is exactly what gets published.
 #
 # makepkg refuses to run as root, and that guard covers --printsrcinfo and the
 # `makepkg -g` that updpkgsums shells out to, so this whole script must run
@@ -18,64 +19,81 @@ need_cmd makepkg updpkgsums namcap bsdtar
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-# Only the files makepkg needs. Copying rather than working in place keeps
-# updpkgsums from rewriting the developer's PKGBUILD.
-cp -t "$WORK" \
-	"$REPO_ROOT/PKGBUILD" \
-	"$REPO_ROOT/initcpio-hooks-tailscale" \
-	"$REPO_ROOT/initcpio-install-tailscale" \
-	"$REPO_ROOT/setup-initcpio-tailscale" || die 'failed to stage sources'
-cd "$WORK" || die "cannot cd to $WORK"
+STAGE="$WORK/stage"
+TEST_TAG=v9.9.9-3
 
-group 'metadata is in sync with the sources'
-
-# The failure people actually hit: edit a source script, forget `make update`,
-# push a PKGBUILD whose sha256sums no longer match. makepkg would reject it at
-# build time anyway, but this check names the fix.
-if updpkgsums >"$WORK/updpkgsums.log" 2>&1; then
-	if diff -u "$REPO_ROOT/PKGBUILD" "$WORK/PKGBUILD" >"$WORK/pkgbuild.diff"; then
-		pass 'PKGBUILD sha256sums match the sources'
-	else
-		fail 'PKGBUILD sha256sums match the sources' \
-			"$(printf 'run "make checksums" (or "make update") and commit the result\n\n%s' "$(cat "$WORK/pkgbuild.diff")")"
-	fi
+group 'staging produces a complete package definition'
+# A version that could not appear by accident, so the assertions below prove the
+# tag really drove the result.
+if "$REPO_ROOT/scripts/aur-stage.sh" "$STAGE" --tag "$TEST_TAG" >"$WORK/stage.log" 2>&1; then
+	pass 'aur-stage.sh stages the release tree'
 else
-	fail 'updpkgsums runs' "$(cat "$WORK/updpkgsums.log")"
+	fail 'aur-stage.sh stages the release tree' "$(cat "$WORK/stage.log")"
+	summary
+	exit 1
 fi
 
-if makepkg --printsrcinfo >"$WORK/SRCINFO.new" 2>"$WORK/srcinfo.err"; then
-	if diff -u "$REPO_ROOT/.SRCINFO" "$WORK/SRCINFO.new" >"$WORK/srcinfo.diff"; then
-		pass '.SRCINFO matches the PKGBUILD'
-	else
-		fail '.SRCINFO matches the PKGBUILD' \
-			"$(printf 'run "make srcinfo" (or "make update") and commit the result\n\n%s' "$(cat "$WORK/srcinfo.diff")")"
-	fi
+check 'staged PKGBUILD takes pkgver from the tag' \
+	grep -qx 'pkgver=9.9.9' "$STAGE/PKGBUILD"
+check 'staged PKGBUILD takes pkgrel from the tag' \
+	grep -qx 'pkgrel=3' "$STAGE/PKGBUILD"
+check_fails 'staged PKGBUILD has no placeholder checksums' \
+	grep -q "'SKIP'" "$STAGE/PKGBUILD"
+check 'staged PKGBUILD has real sha256sums' \
+	grep -Eq "sha256sums=\('[0-9a-f]{64}'" "$STAGE/PKGBUILD"
+check 'staged .SRCINFO exists' test -s "$STAGE/.SRCINFO"
+check '.SRCINFO agrees with the staged pkgver' \
+	grep -Eq '^[[:space:]]*pkgver = 9\.9\.9$' "$STAGE/.SRCINFO"
+check '.SRCINFO agrees with the staged pkgrel' \
+	grep -Eq '^[[:space:]]*pkgrel = 3$' "$STAGE/.SRCINFO"
+# The AUR rejects a push without .SRCINFO, so the published .gitignore must not
+# carry this repo's rule for it.
+check_fails 'staged .gitignore does not ignore .SRCINFO' \
+	grep -qx '\.SRCINFO' "$STAGE/.gitignore"
+
+# Nothing outside the release set may leak into what users clone.
+# LC_ALL=C so the ordering matches this list regardless of the caller's locale --
+# en_US.UTF-8 sorts dotfiles and case differently from the C collation CI uses.
+find "$STAGE" -mindepth 1 -printf '%P\n' | LC_ALL=C sort >"$WORK/staged.files"
+if diff -u - "$WORK/staged.files" >"$WORK/staged.diff" <<-'EOF'; then
+	.SRCINFO
+	.gitignore
+	Makefile
+	PKGBUILD
+	README.md
+	initcpio-hooks-tailscale
+	initcpio-install-tailscale
+	setup-initcpio-tailscale
+EOF
+	pass 'staged tree contains exactly the release file set'
 else
-	fail 'makepkg --printsrcinfo runs' "$(cat "$WORK/srcinfo.err")"
+	fail 'staged tree contains exactly the release file set' "$(cat "$WORK/staged.diff")"
 fi
 endgroup
 
 group 'namcap PKGBUILD'
 # namcap exits 0 even when it reports errors, so grade its output instead.
-namcap PKGBUILD 2>&1 | tee "$WORK/namcap-pkgbuild.log"
+namcap "$STAGE/PKGBUILD" 2>&1 | tee "$WORK/namcap-pkgbuild.log"
 check_fails 'namcap reports no errors for PKGBUILD' grep -q ' E: ' "$WORK/namcap-pkgbuild.log"
 endgroup
 
 group 'makepkg build'
-# --nodeps: the sole dependency is mkinitcpio and building this package does not
-# need it installed, which keeps this job free of sudo/pacman.
-if makepkg --noconfirm --nodeps --force --cleanbuild >"$WORK/makepkg.log" 2>&1; then
-	pass 'makepkg builds the package'
+# --nodeps: the sole dependency is mkinitcpio and building does not need it
+# installed, which keeps this stage free of sudo/pacman.
+if (cd "$STAGE" && makepkg --noconfirm --nodeps --force >"$WORK/makepkg.log" 2>&1); then
+	pass 'makepkg builds the staged package'
 else
-	fail 'makepkg builds the package' "$(tail -40 "$WORK/makepkg.log")"
+	fail 'makepkg builds the staged package' "$(tail -40 "$WORK/makepkg.log")"
 	summary
 	exit 1
 fi
 endgroup
 
-PKG=$(echo "$WORK"/mkinitcpio-tailscale-*.pkg.tar.zst)
+PKG=$(echo "$STAGE"/mkinitcpio-tailscale-*.pkg.tar.zst)
 [[ -f $PKG ]] || die 'makepkg reported success but produced no package'
 info "built $(basename "$PKG")"
+check 'the built package is named for the tag' \
+	test "$(basename "$PKG")" = 'mkinitcpio-tailscale-9.9.9-3-any.pkg.tar.zst'
 
 group 'namcap package'
 namcap "$PKG" 2>&1 | tee "$WORK/namcap-pkg.log"
@@ -84,7 +102,7 @@ endgroup
 
 group 'package payload'
 bsdtar -tvf "$PKG" | awk '{print $1, $NF}' >"$WORK/payload.modes"
-bsdtar -tf "$PKG" | grep -v '^\.' | grep -v '/$' | sort >"$WORK/payload.files"
+bsdtar -tf "$PKG" | grep -v '^\.' | grep -v '/$' | LC_ALL=C sort >"$WORK/payload.files"
 
 # Modes matter: setup-initcpio-tailscale is run directly by the user, while the
 # two initcpio files are sourced by mkinitcpio and must not be executable.
@@ -118,8 +136,7 @@ check 'packaged install hook matches the source file' \
 	cmp -s "$WORK/installed-hook" "$REPO_ROOT/initcpio-install-tailscale"
 endgroup
 
-# Hand the package to the caller (CI uploads it as an artifact and the boot test
-# installs it).
+# Hand the package to the caller (CI uploads it as an artifact).
 if [[ -n ${ARTIFACT_DIR:-} ]]; then
 	install -d "$ARTIFACT_DIR"
 	cp "$PKG" "$ARTIFACT_DIR/"

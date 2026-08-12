@@ -1,0 +1,76 @@
+name: Publish
+
+# Releases are cut by pushing a tag. The tag is the only source of truth for the
+# version:
+#
+#   v1.2.0     ->  pkgver=1.2.0  pkgrel=1
+#   v1.2.0-2   ->  pkgver=1.2.0  pkgrel=2   (packaging-only rebuild)
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # The full suite, against the exact commit being released. Tag pushes do not
+  # match ci.yml's branch filter, so it is invoked explicitly rather than trusted
+  # to have run earlier.
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: publish to the AUR
+    needs: test
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    timeout-minutes: 20
+    steps:
+      - name: Bootstrap
+        run: |
+          pacman -Syu --noconfirm --needed git pacman-contrib openssh
+          # makepkg, --printsrcinfo and updpkgsums all refuse to run as root.
+          useradd -m builder
+
+      - uses: actions/checkout@v7
+        with:
+          # Need master's history to prove the tag descends from it.
+          fetch-depth: 0
+
+      - name: Refuse to publish a tag that is not on master
+        run: |
+          git config --system --add safe.directory "$GITHUB_WORKSPACE"
+          git fetch --quiet origin master
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "::error::${GITHUB_REF_NAME} is not contained in origin/master; refusing to publish unmerged code"
+            exit 1
+          fi
+          echo "$GITHUB_REF_NAME is on master"
+
+      - name: Configure SSH for the AUR
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          [ -n "$AUR_SSH_PRIVATE_KEY" ] || { echo "::error::AUR_SSH_PRIVATE_KEY is not set"; exit 1; }
+          install -d -m700 -o builder -g builder /home/builder/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" >/home/builder/.ssh/id_ed25519
+          # Pinned rather than StrictHostKeyChecking=no, so the push cannot be
+          # silently redirected. Fingerprint published by the AUR:
+          #   SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4
+          cat >/home/builder/.ssh/known_hosts <<'EOF'
+          aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN
+          EOF
+          chmod 600 /home/builder/.ssh/id_ed25519 /home/builder/.ssh/known_hosts
+          chown -R builder:builder /home/builder/.ssh
+
+      - name: Publish
+        run: |
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          runuser -u builder -- ./scripts/aur-publish.sh --tag "$GITHUB_REF_NAME"
+        env:
+          GIT_AUTHOR_NAME: ${{ github.actor }}
+          GIT_AUTHOR_EMAIL: ${{ github.actor }}@users.noreply.github.com

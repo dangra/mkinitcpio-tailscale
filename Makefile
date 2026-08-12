@@ -1,23 +1,30 @@
 
-.PHONY: build install update checksums srcinfo publish test test-all
+STAGEDIR ?= .stage
+TAG ?=
+
+.PHONY: stage build install publish test test-all clean
 
 
-build: update
-	makepkg -cCf
+# PKGBUILD in this repo is a template: pkgver, pkgrel and sha256sums are
+# placeholders and .SRCINFO is not tracked. Everything that needs a real package
+# definition stages one first, so a local build and a release cannot differ.
+#
+# Pass TAG to stamp a version, e.g. `make build TAG=v1.2.0`; without it the
+# 0.0.0 placeholder is kept.
+stage:
+	rm -rf "$(STAGEDIR)"
+	./scripts/aur-stage.sh "$(STAGEDIR)" $(if $(TAG),--tag "$(TAG)")
 
-install: update
-	makepkg -icCf
+build: stage
+	cd "$(STAGEDIR)" && makepkg -f
 
-update: checksums srcinfo
+install: stage
+	cd "$(STAGEDIR)" && makepkg -if
 
-checksums:
-	updpkgsums
-
-srcinfo:
-	makepkg --printsrcinfo >.SRCINFO
-
+# Publish to the AUR. Requires a tagged commit, or `make publish TAG=vX.Y.Z`.
+# Set AUR_REMOTE to rehearse against a scratch repo.
 publish:
-	git push ssh://aur@aur.archlinux.org/mkinitcpio-tailscale.git
+	./scripts/aur-publish.sh $(if $(TAG),--tag "$(TAG)")
 
 # Runs the same scripts CI does, in a throwaway Arch container.
 test:
@@ -26,3 +33,6 @@ test:
 # Adds the QEMU boot test against a throwaway headscale server.
 test-all:
 	./tests/container.sh all
+
+clean:
+	rm -rf "$(STAGEDIR)"
