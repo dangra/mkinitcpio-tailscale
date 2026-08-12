@@ -51,6 +51,16 @@ check '.SRCINFO agrees with the staged pkgrel' \
 check_fails 'staged .gitignore does not ignore .SRCINFO' \
 	grep -qx '\.SRCINFO' "$STAGE/.gitignore"
 
+# The template preamble describes this repo, not the published package. Left in,
+# it tells AUR users the finished PKGBUILD is a template and points them at
+# `make build` and scripts/, neither of which exists in what they cloned.
+check_fails 'staged PKGBUILD has no strip markers' \
+	grep -q 'aur-stage:strip' "$STAGE/PKGBUILD"
+check_fails 'staged PKGBUILD does not call itself a template' \
+	grep -qi 'template' "$STAGE/PKGBUILD"
+check 'staged PKGBUILD keeps the maintainer line' \
+	grep -q '^# Maintainer:' "$STAGE/PKGBUILD"
+
 # Nothing outside the release set may leak into what users clone.
 # LC_ALL=C so the ordering matches this list regardless of the caller's locale --
 # en_US.UTF-8 sorts dotfiles and case differently from the C collation CI uses.

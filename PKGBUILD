@@ -1,10 +1,16 @@
 # Maintainer:  Daniel Graña <dangra at gmail dot com>
+# aur-stage:strip-start
 #
-# This is a template, not a finished package definition. pkgver, pkgrel and
-# sha256sums are placeholders filled in at release time by scripts/aur-stage.sh
-# from the git tag being published; .SRCINFO is generated there too and is not
-# tracked in this repo. Build with `make build` (which stages first) rather than
-# running makepkg here, or you will get a package labelled 0.0.0.
+# Everything between the strip markers is removed by scripts/aur-stage.sh and
+# never reaches the AUR, where it would be both wrong and confusing: the
+# published PKGBUILD is a finished definition and none of this applies to it.
+#
+# This file is a template. pkgver, pkgrel and sha256sums are placeholders filled
+# in at release time from the git tag being published; .SRCINFO is generated
+# there too and is not tracked in this repo. Build with `make build` (which
+# stages first) rather than running makepkg here, or you will get a package
+# labelled 0.0.0.
+# aur-stage:strip-end
 
 pkgname=mkinitcpio-tailscale
 pkgver=0.0.0
