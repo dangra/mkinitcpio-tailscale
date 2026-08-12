@@ -36,13 +36,15 @@ AUR_FILES=(
 
 usage() {
 	cat <<-EOF
-		usage: $CMD0 <outdir> [--tag vX.Y.Z[-R]]
+		usage: $CMD0 <outdir> [--tag vX.Y.Z[-R]] [--clean]
 
 		Copies the release file set into <outdir>, applies the version from the
 		tag, generates sha256sums and writes .SRCINFO.
 
 		  vX.Y.Z      pkgver=X.Y.Z, pkgrel=1
 		  vX.Y.Z-R    pkgver=X.Y.Z, pkgrel=R
+
+		<outdir> must be empty or nonexistent unless --clean is given.
 	EOF
 }
 
@@ -69,11 +71,16 @@ parse_tag() {
 
 OUTDIR=''
 TAG=''
+CLEAN=0
 while (($#)); do
 	case $1 in
 		-h | --help)
 			usage
 			exit 0
+			;;
+		--clean)
+			CLEAN=1
+			shift
 			;;
 		--tag)
 			[[ -n ${2:-} ]] || die '--tag requires a value'
@@ -103,6 +110,15 @@ command -v updpkgsums >/dev/null || die 'updpkgsums not found (pacman-contrib)'
 command -v makepkg >/dev/null || die 'makepkg not found'
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Refuse to stage on top of existing content: leftovers would sit alongside the
+# release set and could be published or tested as if they belonged. Clearing is
+# opt-in rather than automatic so a mistyped path cannot wipe a real directory.
+if [[ -d $OUTDIR ]] && [[ -n $(ls -A "$OUTDIR" 2>/dev/null) ]]; then
+	((CLEAN)) ||
+		die "$OUTDIR is not empty; pass --clean to replace its contents"
+	find "$OUTDIR" -mindepth 1 -delete
+fi
 
 mkdir -p "$OUTDIR"
 OUTDIR="$(cd -- "$OUTDIR" && pwd)"

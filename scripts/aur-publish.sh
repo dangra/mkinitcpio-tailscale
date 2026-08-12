@@ -88,8 +88,11 @@ NEW_REL=$(sed -n 's/^pkgrel=//p' "$STAGE/PKGBUILD")
 
 CLONE="$WORK/aur"
 info "cloning $AUR_REMOTE"
-git clone --quiet "$AUR_REMOTE" "$CLONE" 2>/dev/null ||
-	die "could not clone $AUR_REMOTE"
+# Keep git's stderr: host key verification, auth and network failures all report
+# here, and they are the first thing to go wrong when setting this up.
+git clone --quiet "$AUR_REMOTE" "$CLONE" >"$WORK/clone.log" 2>&1 ||
+	die "could not clone $AUR_REMOTE
+$(sed 's/^/       /' "$WORK/clone.log")"
 
 # A freshly initialised remote has no commits yet; treat that as a first publish.
 if git -C "$CLONE" rev-parse --verify --quiet HEAD >/dev/null; then
@@ -127,8 +130,15 @@ if ((DRY_RUN)); then
 	exit 0
 fi
 
-git -C "$CLONE" -c user.name="${GIT_AUTHOR_NAME:-$(git -C "$REPO_ROOT" config user.name)}" \
-	-c user.email="${GIT_AUTHOR_EMAIL:-$(git -C "$REPO_ROOT" config user.email)}" \
+# Resolve the commit identity up front. Left to git, an unset user.name in a
+# fresh environment surfaces as a confusing "empty ident name" from deep inside
+# the commit; say plainly what is missing instead.
+AUTHOR_NAME=${GIT_AUTHOR_NAME:-$(git -C "$REPO_ROOT" config user.name || true)}
+AUTHOR_EMAIL=${GIT_AUTHOR_EMAIL:-$(git -C "$REPO_ROOT" config user.email || true)}
+[[ -n $AUTHOR_NAME && -n $AUTHOR_EMAIL ]] ||
+	die 'no commit identity: set git user.name and user.email, or GIT_AUTHOR_NAME and GIT_AUTHOR_EMAIL'
+
+git -C "$CLONE" -c user.name="$AUTHOR_NAME" -c user.email="$AUTHOR_EMAIL" \
 	commit --quiet -m "Update to ${NEW_VER}-${NEW_REL}"
 
 # Never force: if the AUR has moved underneath us, fail rather than overwrite.
