@@ -133,3 +133,41 @@ jobs:
           name: boot-logs
           path: logs/
           if-no-files-found: ignore
+
+  # Exercises the release path on every push and PR, stopping short of the push.
+  # The AUR repo clones anonymously over HTTPS, so this needs no credentials and
+  # works on pull requests from forks, where secrets are unavailable.
+  #
+  # Without this the publish logic would only ever run during an actual release,
+  # which is the worst moment to discover it is broken.
+  publish-dry-run:
+    name: publish (dry run)
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    timeout-minutes: 15
+    steps:
+      - name: Bootstrap
+        run: |
+          pacman -Syu --noconfirm --needed git pacman-contrib
+          # updpkgsums and --printsrcinfo refuse to run as root.
+          useradd -m builder
+
+      - uses: actions/checkout@v7
+        with:
+          # git describe needs the tags.
+          fetch-depth: 0
+
+      - name: Show what a release would push to the AUR
+        env:
+          # Read-only endpoint; the SSH URL is only used for the real push.
+          AUR_REMOTE: https://aur.archlinux.org/mkinitcpio-tailscale.git
+        run: |
+          git config --system --add safe.directory "$GITHUB_WORKSPACE"
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          # Stage as the most recent release, so the diff against the AUR shows
+          # what this commit would actually change rather than a version bump.
+          # On a tag build this resolves to the tag being released.
+          tag=$(git describe --tags --abbrev=0 2>/dev/null || echo v0.0.0)
+          echo "dry-running as $tag against $AUR_REMOTE"
+          runuser -u builder --preserve-environment -- \
+            ./scripts/aur-publish.sh --dry-run --tag "$tag"
