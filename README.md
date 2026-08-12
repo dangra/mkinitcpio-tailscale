@@ -21,7 +21,7 @@ ports.
 
 ## Installation
 
-You can install the package from the AUR:
+You can install [`mkinitcpio-tailscale`][aur] from the AUR:
 
 ```sh
 yay -S mkinitcpio-tailscale
@@ -235,6 +235,7 @@ AUR_REMOTE=/tmp/fake-aur.git ./scripts/aur-publish.sh --tag v1.2.0
 [gh2]: https://github.com/karepker
 [gh3]: https://github.com/classabbyamp
 [gh4]: https://github.com/wolegis
+[aur]: https://aur.archlinux.org/packages/mkinitcpio-tailscale
 [1]: https://wiki.archlinux.org/title/Mkinitcpio
 [2]: https://tailscale.com
 [3]: https://wiki.archlinux.org/title/dm-crypt/Encrypting_an_entire_system#Configuring_mkinitcpio_2
