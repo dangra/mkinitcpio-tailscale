@@ -21,7 +21,17 @@ set -uo pipefail
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 . "$(dirname -- "${BASH_SOURCE[0]}")/fixtures.sh"
 
-HEADSCALE_VERSION=${HEADSCALE_VERSION:-0.26.1}
+# Pinned headscale release, with the sha256 of its linux_amd64 asset taken from
+# the checksums.txt published alongside it. Bumping the version means updating
+# the hash; overriding HEADSCALE_VERSION without also passing HEADSCALE_SHA256
+# skips verification and warns.
+HEADSCALE_PINNED_VERSION=0.26.1
+HEADSCALE_PINNED_SHA256=5012577e6fc5d4234aab7b4be0d6e271ea1a4ec38521a8aa472f80ea1fe81cba
+HEADSCALE_VERSION=${HEADSCALE_VERSION:-$HEADSCALE_PINNED_VERSION}
+if [[ -z ${HEADSCALE_SHA256:-} && $HEADSCALE_VERSION == "$HEADSCALE_PINNED_VERSION" ]]; then
+	HEADSCALE_SHA256=$HEADSCALE_PINNED_SHA256
+fi
+
 BOOT_TIMEOUT=${BOOT_TIMEOUT:-300}
 TS_NODE_NAME=${TS_NODE_NAME:-ci-initrd}
 
@@ -96,6 +106,18 @@ if [[ ! -x $HEADSCALE ]]; then
 	url="https://github.com/juanfont/headscale/releases/download/v${HEADSCALE_VERSION}/headscale_${HEADSCALE_VERSION}_linux_amd64"
 	info "downloading headscale $HEADSCALE_VERSION"
 	curl -fsSL -o "$HEADSCALE" "$url" || die "failed to download $url"
+
+	if [[ -n ${HEADSCALE_SHA256:-} ]]; then
+		got=$(sha256sum "$HEADSCALE" | cut -d' ' -f1)
+		[[ $got == "$HEADSCALE_SHA256" ]] ||
+			die "headscale checksum mismatch
+       expected $HEADSCALE_SHA256
+       got      $got"
+		pass 'the headscale download matches its pinned checksum'
+	else
+		warn "no checksum pinned for headscale $HEADSCALE_VERSION; skipping verification"
+	fi
+
 	chmod 755 "$HEADSCALE"
 fi
 
@@ -200,8 +222,13 @@ endgroup
 
 # --- build the image ------------------------------------------------------
 group 'build the boot image'
-install -d /etc/systemd/network
-cat >/etc/systemd/network/10-ci.network <<-'EOF'
+# Kept in $WORK and handed to the hook via TESTNET_CONFIG rather than written
+# to /etc/systemd/network: with ALLOW_UNSAFE=1 this script can be run on a real
+# host, where leaving a DHCP .network file behind would persistently affect
+# systemd-networkd.
+TESTNET_CONFIG="$WORK/10-ci.network"
+export TESTNET_CONFIG
+cat >"$TESTNET_CONFIG" <<-'EOF'
 	[Match]
 	Name=en* eth*
 

@@ -6,9 +6,10 @@
 #   tests/container.sh all          # plus the QEMU boot test
 #   tests/container.sh 01 02        # a subset
 #
-# Uses podman if available, otherwise docker. CI does not call this script --
-# it runs tests/NN-*.sh directly in its own container -- but the package set
-# below is kept in step with the workflow so local and CI runs match.
+# Uses podman if available, otherwise docker. CI's lint, package and initramfs
+# jobs run tests/NN-*.sh directly in an Arch `container:` job, so the package set
+# below is kept in step with the workflow. The boot job does call this script,
+# so that --device /dev/kvm is only passed when the runner actually has KVM.
 set -euo pipefail
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd -- "$HERE/.." && pwd)
