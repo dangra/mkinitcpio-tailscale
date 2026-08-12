@@ -11,12 +11,12 @@ depends=("mkinitcpio")
 source=("initcpio-hooks-tailscale"
   "initcpio-install-tailscale"
   "setup-initcpio-tailscale")
-sha256sums=('ce5df937e08ee7791921aad719413640aca445083694b2f526008a8ad53d4155'
-            '68d6a305f950f944e858f02032347ea9d3139a873effb67242fdcb2c06cae7ea'
-            '745a12f097fcfe4a3b6b5a76e6b43fefa84efc93628131b8c87a8a40cd45545f')
+sha256sums=('fc322878c59232bd92043b9aa3827cee40704937d9ecf0ebe1a66174f990cb3e'
+            '2e63c9a69ec45322f2166a23f73b2bc79cb269c7526b1e2729c84917e72f3206'
+            '63fd44cd09e73fbb35107328c3f0b69c9ffc9ea30083753b85c51f62261d9671')
 
 package() {
-  install -m 644 -D ${srcdir}/initcpio-hooks-tailscale ${pkgdir}/usr/lib/initcpio/hooks/tailscale
-  install -m 644 -D ${srcdir}/initcpio-install-tailscale ${pkgdir}/usr/lib/initcpio/install/tailscale
-  install -m 755 -D ${srcdir}/setup-initcpio-tailscale ${pkgdir}/usr/bin/setup-initcpio-tailscale
+  install -m 644 -D "${srcdir}/initcpio-hooks-tailscale" "${pkgdir}/usr/lib/initcpio/hooks/tailscale"
+  install -m 644 -D "${srcdir}/initcpio-install-tailscale" "${pkgdir}/usr/lib/initcpio/install/tailscale"
+  install -m 755 -D "${srcdir}/setup-initcpio-tailscale" "${pkgdir}/usr/bin/setup-initcpio-tailscale"
 }

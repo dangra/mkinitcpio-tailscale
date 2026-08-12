@@ -26,8 +26,9 @@ build() {
 
 	# Copy ssh host keys if they exist
 	if [[ -d ${setupdir}/ssh ]]; then
-		for f in $(ls -A ${setupdir}/ssh); do
-			add_file ${setupdir}/ssh/${f} /var/lib/tailscale/ssh/
+		for f in "${setupdir}"/ssh/*; do
+			[[ -e $f ]] || continue
+			add_file "$f" /var/lib/tailscale/ssh/
 		done
 	fi
 

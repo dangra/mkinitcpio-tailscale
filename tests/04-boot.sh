@@ -17,6 +17,7 @@
 #
 #   --installed   test /usr/lib/initcpio/... and /usr/bin/setup-initcpio-tailscale
 #                 from the built package instead of the working tree
+# shellcheck source-path=SCRIPTDIR
 set -uo pipefail
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 . "$(dirname -- "${BASH_SOURCE[0]}")/fixtures.sh"
