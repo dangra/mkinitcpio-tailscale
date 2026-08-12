@@ -63,7 +63,7 @@ while locked out of a machine that is waiting for its passphrase.
 
 ### 2. Give the initramfs a network
 
-Nothing in mkinitcpio's stock hooks brings up networking, and `tailscaled`
+Nothing in mkinitcpio's stock hooks bring up networking, and `tailscaled`
 cannot do anything without an address. Add one of these alongside this hook:
 
 | initramfs | hook | package | configured by |
