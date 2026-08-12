@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Static checks.
 #
-# Findings from shellcheck are advisory: they are printed (and surfaced in the
-# job summary on CI) but never fail the run. Syntax errors are different --
-# a script that does not parse is unambiguously broken, so `bash -n` and the
-# busybox `ash -n` check are blocking.
+# Everything here is blocking, shellcheck included. Where a finding is a false
+# positive the suppression lives at the offending line with a comment saying
+# why, rather than being filtered out globally.
+# shellcheck source-path=SCRIPTDIR
 set -uo pipefail
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -13,28 +13,30 @@ cd "$REPO_ROOT" || die "cannot cd to $REPO_ROOT"
 SCRIPTS=(initcpio-install-tailscale initcpio-hooks-tailscale setup-initcpio-tailscale)
 TEST_SCRIPTS=(tests/*.sh)
 
-group 'shellcheck (advisory)'
-if command -v shellcheck >/dev/null 2>&1; then
-	sc_out=$(shellcheck "${SCRIPTS[@]}" "${TEST_SCRIPTS[@]}" 2>&1) || true
-	# SC2034/SC2154 are structural in a PKGBUILD (makepkg assigns and consumes
-	# these), so they are excluded rather than reported as noise every run.
-	pkgbuild_out=$(shellcheck --shell=bash --exclude=SC2034,SC2154 PKGBUILD 2>&1) || true
+group 'shellcheck'
+command -v shellcheck >/dev/null 2>&1 ||
+	die 'shellcheck is required; install the shellcheck package'
 
-	if [[ -n $sc_out || -n $pkgbuild_out ]]; then
-		printf '%s\n' "$sc_out" "$pkgbuild_out"
-		if [[ -n ${GITHUB_STEP_SUMMARY:-} ]]; then
-			{
-				printf '### shellcheck (advisory)\n\n```\n'
-				printf '%s\n' "$sc_out" "$pkgbuild_out"
-				printf '```\n'
-			} >>"$GITHUB_STEP_SUMMARY"
-		fi
-		warn 'shellcheck reported findings (not failing the build)'
-	else
-		info 'shellcheck is clean'
-	fi
+# -x follows sourced files, which together with the source-path=SCRIPTDIR
+# directive in each test script lets shellcheck see lib.sh and fixtures.sh.
+sc_out=$(shellcheck -x "${SCRIPTS[@]}" "${TEST_SCRIPTS[@]}" 2>&1) && sc_rc=0 || sc_rc=$?
+
+# SC2034/SC2154 are structural in a PKGBUILD: makepkg assigns and consumes
+# these, so shellcheck cannot see either end of them.
+pkg_out=$(shellcheck --shell=bash --exclude=SC2034,SC2154 PKGBUILD 2>&1) && pkg_rc=0 || pkg_rc=$?
+
+if ((sc_rc == 0 && pkg_rc == 0)); then
+	pass 'shellcheck is clean'
 else
-	warn 'shellcheck not installed; skipping'
+	printf '%s\n' "$sc_out" "$pkg_out"
+	if [[ -n ${GITHUB_STEP_SUMMARY:-} ]]; then
+		{
+			printf '### shellcheck\n\n```\n'
+			printf '%s\n' "$sc_out" "$pkg_out"
+			printf '```\n'
+		} >>"$GITHUB_STEP_SUMMARY"
+	fi
+	fail 'shellcheck is clean' 'see the findings above'
 fi
 endgroup
 
