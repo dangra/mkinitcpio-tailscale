@@ -1,5 +1,5 @@
 
-.PHONY: build install update checksums srcinfo
+.PHONY: build install update checksums srcinfo publish test test-all
 
 
 build: update
@@ -18,3 +18,11 @@ srcinfo:
 
 publish:
 	git push ssh://aur@aur.archlinux.org/mkinitcpio-tailscale.git
+
+# Runs the same scripts CI does, in a throwaway Arch container.
+test:
+	./tests/container.sh
+
+# Adds the QEMU boot test against a throwaway headscale server.
+test-all:
+	./tests/container.sh all

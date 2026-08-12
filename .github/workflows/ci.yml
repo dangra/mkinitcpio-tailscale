@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    timeout-minutes: 10
+    steps:
+      # git has to be installed before actions/checkout, otherwise it falls back
+      # to downloading a REST tarball.
+      - name: Bootstrap
+        run: pacman -Syu --noconfirm --needed git shellcheck mkinitcpio
+
+      - uses: actions/checkout@v4
+
+      # Findings from shellcheck are reported but do not fail the build; syntax
+      # errors do. See tests/01-lint.sh.
+      - name: Static checks
+        run: ./tests/01-lint.sh
+
+  package:
+    name: package
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    timeout-minutes: 20
+    steps:
+      - name: Bootstrap
+        run: |
+          pacman -Syu --noconfirm --needed git pacman-contrib namcap mkinitcpio
+          # makepkg refuses to run as root, and that guard also covers
+          # --printsrcinfo and the `makepkg -g` that updpkgsums shells out to.
+          useradd -m builder
+
+      - uses: actions/checkout@v4
+
+      - name: Prepare workspace
+        run: |
+          git config --system --add safe.directory "$GITHUB_WORKSPACE"
+          install -d -o builder -g builder "$GITHUB_WORKSPACE/dist"
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      - name: Metadata, makepkg, namcap and payload checks
+        run: runuser -u builder -- ./tests/02-package.sh
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package
+          path: dist/*.pkg.tar.zst
+          if-no-files-found: error
+          retention-days: 7
+
+  initramfs:
+    name: initramfs
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    timeout-minutes: 30
+    steps:
+      - name: Bootstrap
+        run: |
+          # Installing a kernel triggers mkinitcpio -P against the stock preset,
+          # which cannot work in a container (autodetect needs the real host).
+          # Disabling only this hook keeps 60-depmod.hook, which the tests need
+          # for modules.dep.
+          install -d /etc/pacman.d/hooks
+          ln -sf /dev/null /etc/pacman.d/hooks/90-mkinitcpio-install.hook
+          # mkinitcpio is named explicitly because linux depends on the virtual
+          # "initramfs" provider and --noconfirm could otherwise pick dracut.
+          # iptables is explicit too: the tailscale package does not depend on
+          # it, but the hook calls add_binary iptables.
+          pacman -Syu --noconfirm --needed \
+            git mkinitcpio linux tailscale iptables openssh
+
+      - uses: actions/checkout@v4
+
+      # Builds real images for the systemd, busybox and Tailscale-SSH variants
+      # and asserts on their contents. Uses the hook files from the working tree
+      # -- the package job separately proves the package ships exactly those
+      # files at the paths mkinitcpio looks in.
+      - name: Build and inspect initramfs images
+        run: ./tests/03-initramfs.sh
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/logs
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: initramfs-logs
+          path: logs/
+          if-no-files-found: ignore
+
+  boot:
+    name: boot
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # Deliberately not a `container:` job. tests/container.sh only passes
+      # --device /dev/kvm when the device exists, so a runner without KVM falls
+      # back to TCG instead of failing at container creation. It also keeps this
+      # identical to how the test runs locally.
+      - name: Boot the initramfs under QEMU against a throwaway headscale
+        run: ./tests/container.sh 04
+        env:
+          # Runners ship both engines; docker runs rootful here, which is what
+          # makes --device /dev/kvm usable.
+          ENGINE: docker
+          ARTIFACT_DIR: ${{ github.workspace }}/logs
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: boot-logs
+          path: logs/
+          if-no-files-found: ignore
