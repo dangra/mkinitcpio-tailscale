@@ -153,11 +153,13 @@ a busybox-based initramfs this hook therefore writes a minimal one itself —
 contains. Where a database already exists it is left untouched, so a
 systemd-based image keeps the richer one mkinitcpio built.
 
-That also fixes the same problem for other SSH servers in early userspace: the
-`mkinitcpio-dropbear` and `mkinitcpio-tinyssh` hooks do not ship a user database
-either, and without one both daemons start, accept the connection and then
-refuse every login with `Permission denied (publickey)`. With this hook in
-`HOOKS` they work as expected.
+That also fixes the same problem for other SSH servers in early userspace.
+Without a user database `dropbear` and `tinyssh` start, accept the connection,
+and then refuse every login with `Permission denied (publickey)` — the old
+standalone hooks never wrote one, and the maintained `mkinitcpio-extras` fork
+does so only if you turn its root-shell option on. This hook writes one whenever
+the image has none, so they work either way, and skips it when a database is
+already there, so the two cannot collide.
 
 **Run one SSH server, not two.** When Tailscale SSH is enabled, tailscaled
 answers port 22 on the tailnet itself, so a dropbear or tinyssh in the same
