@@ -236,37 +236,36 @@ endgroup
 
 # --- variants D-F: the guard clauses --------------------------------------
 #
-# Note on what these assert. mkinitcpio's run_build_hook deliberately discards
-# build()'s return value ("Hooks can do their own error catching"), and only
-# failures inside add_* functions bump the internal _builderrors counter. So a
-# guard clause that calls error() and returns 1 prints a message but does NOT
-# stop image generation -- mkinitcpio still exits 0.
-#
-# These tests therefore assert the contract that actually holds today: the
-# guard reports the problem and, crucially, no half-configured image is
-# produced (no state file, no env file, no tailscale binaries). If the hook is
-# ever changed to abort the build for real -- the stock idiom is
-# `builderrors=$(( ++_builderrors ))` before `return 1`, as in the acpi_override
-# hook -- tighten `assert_guard` to require a non-zero exit.
+# mkinitcpio's run_build_hook deliberately discards build()'s return value
+# ("Hooks can do their own error catching"), and only failures inside add_*
+# functions bump the internal _builderrors counter. A guard clause that just
+# calls error() and returns 1 therefore prints a message while mkinitcpio still
+# exits 0 and writes an image -- which is why the hook bumps _builderrors
+# itself. These tests are what hold that behaviour in place.
 group 'variants D-F: guard clauses reject bad configuration'
 
-# assert_guard <label> <error regex> — build must be refused by the hook
+# assert_guard <label> <error regex> — the build must be refused outright
 assert_guard() {
 	local label=$1 re=$2 rc=0
 	build_image 'base systemd tailscale' || rc=$?
 
 	check "$label: the hook reports the problem" grep -qE "$re" "$LOG"
 
-	if ((rc == 0)); then
-		# Expected today; recorded rather than asserted so the suite documents
-		# the gap instead of hiding it.
-		info "  note: mkinitcpio still exited 0 ($label); the hook only warns"
+	if ((rc != 0)); then
+		pass "$label: mkinitcpio exits non-zero"
+	else
+		fail "$label: mkinitcpio exits non-zero" \
+			'the hook reported the problem but the build was allowed to succeed'
+	fi
+
+	# Nothing half-configured should be left behind either way.
+	if [[ -f $IMG ]]; then
 		snapshot
 		img_lacks "$ROOT" etc/default/tailscaled
 		img_lacks "$ROOT" var/lib/tailscale/tailscaled.state
 		img_lacks "$ROOT" usr/bin/tailscaled
 	else
-		pass "$label: mkinitcpio exits non-zero"
+		pass "$label: no image was written"
 	fi
 }
 
