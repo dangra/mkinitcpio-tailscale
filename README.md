@@ -130,6 +130,47 @@ If you suspect compromise:
 - Re-run `setup-initcpio-tailscale` to register a fresh node and rebuild your
   initramfs.
 
+## Development
+
+Run the test suite in a throwaway Arch container:
+
+```sh
+make test        # lint, packaging, initramfs image contents
+make test-all    # adds a QEMU boot test against a local headscale
+```
+
+### Releasing
+
+`PKGBUILD` in this repository is a **template, not a finished package
+definition**. `pkgver`, `pkgrel` and `sha256sums` are placeholders, and
+`.SRCINFO` is not tracked at all — they are generated at release time by
+`scripts/aur-stage.sh`. Running `makepkg` directly here produces a package
+labelled `0.0.0`; use `make build` instead, which stages a complete definition
+first.
+
+A release is cut by pushing a tag. The tag is the only source of truth for the
+version:
+
+| Tag        | Publishes    |
+| ---------- | ------------ |
+| `v1.2.0`   | `1.2.0-1`    |
+| `v1.2.0-2` | `1.2.0-2`    |
+
+```sh
+git tag v1.2.0 && git push origin v1.2.0
+```
+
+That runs the full test suite and, only if it passes, publishes to the AUR: a
+curated tree of packaging files only, never `tests/` or `.github/`. Use
+`v<version>-<rel>` for a packaging-only rebuild of a version already published.
+
+To rehearse without touching the AUR:
+
+```sh
+git init --bare /tmp/fake-aur.git
+AUR_REMOTE=/tmp/fake-aur.git ./scripts/aur-publish.sh --tag v1.2.0
+```
+
 ## Prior work and big thanks
 
 - [@tavianator][gh1] — early work and inspiration:

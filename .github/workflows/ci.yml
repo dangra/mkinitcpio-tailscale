@@ -5,6 +5,10 @@ on:
     branches: [master, main]
   pull_request:
   workflow_dispatch:
+  # Lets the release workflow gate a publish on these same four jobs instead of
+  # duplicating them. Tag pushes do not match the branch filter above, so a
+  # release has to invoke this explicitly.
+  workflow_call:
 
 permissions:
   contents: read
