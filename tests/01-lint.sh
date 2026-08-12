@@ -26,7 +26,7 @@ sc_out=$(shellcheck -x "${SCRIPTS[@]}" "${TEST_SCRIPTS[@]}" 2>&1) && sc_rc=0 || 
 pkg_out=$(shellcheck --shell=bash --exclude=SC2034,SC2154 PKGBUILD 2>&1) && pkg_rc=0 || pkg_rc=$?
 
 if ((sc_rc == 0 && pkg_rc == 0)); then
-	pass 'shellcheck is clean'
+	pass 'shellcheck reports no findings'
 else
 	printf '%s\n' "$sc_out" "$pkg_out"
 	if [[ -n ${GITHUB_STEP_SUMMARY:-} ]]; then
@@ -36,7 +36,7 @@ else
 			printf '```\n'
 		} >>"$GITHUB_STEP_SUMMARY"
 	fi
-	fail 'shellcheck is clean' 'see the findings above'
+	fail 'shellcheck reports no findings' 'see the findings above'
 fi
 endgroup
 
