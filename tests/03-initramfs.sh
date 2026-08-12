@@ -130,6 +130,13 @@ in_list() { grep -qxF -- "$1" "$LIST"; }
 # Shared expectations for every successful build.
 assert_common() {
 	local label=$1
+
+	# A runtime hook whose shebang names an interpreter the image does not ship
+	# makes mkinitcpio warn on every rebuild the user runs. Cheap to keep quiet,
+	# and the warning is exactly the kind of noise that trains people to ignore
+	# mkinitcpio's output.
+	check_fails "$label: the build logs no missing-interpreter warning" \
+		grep -q 'Possibly missing' "$LOG"
 	check "$label: tailscaled binary" in_list usr/bin/tailscaled
 	check "$label: tailscale binary" in_list usr/bin/tailscale
 	check "$label: getent" in_list usr/bin/getent
@@ -179,6 +186,12 @@ if build_image 'base systemd tailscale'; then
 
 	img_lacks "$ROOT" hooks/tailscale
 	img_lacks "$ROOT" var/lib/tailscale/ssh
+
+	# The hook writes a user database only where nothing else has. mkinitcpio's
+	# systemd hook writes a much richer /etc/group than the single root line the
+	# busybox branch falls back to, so a surviving 'wheel' is what proves the
+	# fallback kept its hands off.
+	img_grep "$ROOT" etc/group '^wheel:'
 else
 	fail 'A: mkinitcpio builds' "$(tail -30 "$LOG")"
 fi
@@ -206,6 +219,18 @@ if build_image 'base udev tailscale'; then
 
 	img_lacks "$ROOT" usr/lib/systemd/system/tailscaled.service
 	img_lacks "$ROOT" etc/systemd/system/tailscaled.service.d/override.conf
+
+	# No stock busybox-side hook writes a user database, so the hook supplies
+	# one: tailscaled resolves the SSH login through it, and so does any dropbear
+	# or tinyssh running alongside. The shell has to be one the image actually
+	# contains, which is what makes /bin/sh the only sane choice here.
+	img_grep "$ROOT" etc/passwd '^root:x:0:0:root:/root:/bin/sh$'
+	img_grep "$ROOT" etc/group '^root:x:0:$'
+	img_has "$ROOT" etc/shadow
+	img_grep "$ROOT" etc/nsswitch.conf '^passwd: files$'
+	check 'B: the root shell exists in the image' test -x "$ROOT/bin/sh"
+	check 'B: /etc/shadow is not world readable' \
+		test "$(stat -c %a "$ROOT/etc/shadow" 2>/dev/null)" = 400
 else
 	fail 'B: mkinitcpio builds' "$(tail -30 "$LOG")"
 fi
@@ -235,7 +260,49 @@ else
 fi
 endgroup
 
-# --- variants D-F: the guard clauses --------------------------------------
+# --- variant D: busybox with Tailscale SSH host keys ----------------------
+# The host keys are copied by the part of build() that runs before the init
+# system is branched on, so they have to arrive in a busybox image too.
+group 'variant D: busybox initramfs with ssh host keys'
+fixtures_write --ssh
+if build_image 'base udev tailscale'; then
+	pass 'D: mkinitcpio builds'
+	snapshot
+	assert_common D
+
+	img_has "$ROOT" hooks/tailscale
+	img_has "$ROOT" var/lib/tailscale/ssh/ssh_host_ed25519_key
+	img_has "$ROOT" var/lib/tailscale/ssh/ssh_host_ed25519_key.pub
+	img_has "$ROOT" var/lib/tailscale/ssh/ssh_host_rsa_key
+	img_same "$ROOT" var/lib/tailscale/ssh/ssh_host_ed25519_key \
+		"$FIXTURE_SRC/ssh/ssh_host_ed25519_key"
+	if [[ -f $ROOT/var/lib/tailscale/ssh/ssh_host_ed25519_key ]]; then
+		check 'D: private host key stays mode 600' \
+			test "$(stat -c %a "$ROOT/var/lib/tailscale/ssh/ssh_host_ed25519_key")" = 600
+	fi
+
+	# The keys are useless without someone to log in as, so the user database
+	# from the busybox branch has to be here too. tests/04-boot.sh proves the
+	# combination end to end by opening a session against a real control server.
+	img_grep "$ROOT" etc/passwd '^root:x:0:0:root:/root:/bin/sh$'
+else
+	fail 'D: mkinitcpio builds' "$(tail -30 "$LOG")"
+fi
+
+# ... and none of that may depend on this test's minimal HOOKS line. Rechecked
+# against the stock default list, minus autodetect and microcode -- both inspect
+# the build host, which a container cannot stand in for.
+if build_image 'base udev modconf kms keyboard keymap consolefont block filesystems fsck tailscale'; then
+	pass 'D: mkinitcpio builds with the stock default hooks'
+	snapshot
+	img_has "$ROOT" hooks/tailscale
+	img_grep "$ROOT" etc/passwd '^root:x:0:0:root:/root:/bin/sh$'
+else
+	fail 'D: mkinitcpio builds with the stock default hooks' "$(tail -30 "$LOG")"
+fi
+endgroup
+
+# --- variants E-G: the guard clauses --------------------------------------
 #
 # mkinitcpio's run_build_hook deliberately discards build()'s return value
 # ("Hooks can do their own error catching"), and only failures inside add_*
@@ -243,7 +310,7 @@ endgroup
 # calls error() and returns 1 therefore prints a message while mkinitcpio still
 # exits 0 and writes an image -- which is why the hook bumps _builderrors
 # itself. These tests are what hold that behaviour in place.
-group 'variants D-F: guard clauses reject bad configuration'
+group 'variants E-G: guard clauses reject bad configuration'
 
 # assert_guard <label> <error regex> — the build must be refused outright
 assert_guard() {
@@ -272,15 +339,15 @@ assert_guard() {
 
 fixtures_write
 : >"$TS_SETUPDIR/tailscaled.state"
-assert_guard 'D: empty tailscaled.state' 'setup-initcpio-tailscale'
+assert_guard 'E: empty tailscaled.state' 'setup-initcpio-tailscale'
 
 fixtures_write
 rm -f "$TS_SETUPDIR/default.env"
-assert_guard 'E: missing default.env' 'default\.env'
+assert_guard 'F: missing default.env' 'default\.env'
 
 fixtures_write
 shim_pacman
-assert_guard 'F: tailscale package absent' 'tailscale not installed'
+assert_guard 'G: tailscale package absent' 'tailscale not installed'
 unshim_pacman
 endgroup
 

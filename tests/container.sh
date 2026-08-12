@@ -43,6 +43,12 @@ want 04 && PKGS+=(mkinitcpio linux tailscale iptables openssh qemu-base jq curl)
 RUN_OPTS=()
 [[ -t 0 && -t 1 ]] && RUN_OPTS+=(-it)
 
+# Knobs for the boot test that are worth reaching from outside the container:
+# which scenarios to boot, and how long each one may take.
+for var in BOOT_SCENARIOS BOOT_TIMEOUT; do
+	[[ -n ${!var:-} ]] && RUN_OPTS+=(-e "$var=${!var}")
+done
+
 # Somewhere for the tests to leave console/build logs behind on failure.
 if [[ -n ${ARTIFACT_DIR:-} ]]; then
 	mkdir -p "$ARTIFACT_DIR"

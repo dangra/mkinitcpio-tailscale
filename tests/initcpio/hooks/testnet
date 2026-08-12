@@ -1,0 +1,43 @@
+#!/usr/bin/ash
+# shellcheck shell=bash
+# Test-only mkinitcpio runtime hook: the busybox counterpart of the networkd
+# setup in tests/initcpio/install/testnet.
+#
+# Sourced by /init under busybox ash, so it sticks to what busybox accepts and
+# to what the base hook puts in the image (the `ip` applet). Shebang and lint
+# directive match the shipped runtime hook, for the same reasons.
+#
+# It is scaffolding for the test suite and is not part of the shipped package.
+
+run_hook() {
+	local dev='' candidate tries=0
+
+	# QEMU's user-mode NAT hands out a fixed lease, so configuring it statically
+	# is equivalent to DHCP here and has nothing to wait for or time out on:
+	#   guest 10.0.2.15/24, gateway and DNS 10.0.2.2 / 10.0.2.3.
+	# Modules listed in MODULES are loaded by /init before any run_hook, so the
+	# virtio NIC is normally present already; poll anyway rather than assume it.
+	while [ -z "$dev" ] && [ "$tries" -lt 50 ]; do
+		for candidate in /sys/class/net/*; do
+			[ -e "$candidate" ] || continue
+			[ "${candidate##*/}" = lo ] && continue
+			dev="${candidate##*/}"
+			break
+		done
+		[ -n "$dev" ] && break
+		tries=$((tries + 1))
+		sleep 0.1
+	done
+
+	if [ -z "$dev" ]; then
+		err "testnet: no network interface appeared"
+		return 0
+	fi
+
+	msg "testnet: configuring $dev for QEMU user-mode networking"
+	ip link set "$dev" up
+	ip addr add 10.0.2.15/24 dev "$dev"
+	ip route add default via 10.0.2.2
+}
+
+# vim: noexpandtab

@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Test-only mkinitcpio hook: adds one unprivileged login to the image's user
+# database, so tests/04-boot.sh can open a Tailscale SSH session against the
+# throwaway headscale control server.
+#
+# Why not just log in as root: headscale compiles every user in an SSH policy
+# rule to the "=" mapping (hscontrol/policy/v2/filter.go), and tailscale's SSH
+# server refuses to resolve "=" to root -- that mapping means "the same
+# unprivileged user" and is checked with an explicit `lu.Uid == "0"` bail-out
+# (ssh/tailssh/tailssh.go, mapLocalUser). Tailscale's own control plane emits an
+# explicit root mapping instead, so root logins work on a real tailnet; this
+# hook only papers over what the test control server cannot express.
+#
+# It appends to an existing database and never creates one. A busybox image has
+# no /etc/passwd -- that is the documented reason Tailscale SSH does not work
+# there, and manufacturing one here would hide the very gap the boot test
+# reports.
+#
+# It is scaffolding for the test suite and is not part of the shipped package.
+
+# Kept in step with SSH_USER in tests/04-boot.sh.
+_testuser=citest
+_testuid=1042
+
+build() {
+	# Both files, not just passwd: appending to a database that is missing half
+	# of itself would create the other half here, which is the creating this hook
+	# promises not to do.
+	if [[ ! -f $BUILDROOT/etc/passwd || ! -f $BUILDROOT/etc/group ]]; then
+		warning "testuser: no user database in the image; leaving it that way"
+		return 0
+	fi
+
+	printf '%s:x:%s:%s::/:/bin/sh\n' "$_testuser" "$_testuid" "$_testuid" \
+		>>"$BUILDROOT/etc/passwd"
+	printf '%s:x:%s:\n' "$_testuser" "$_testuid" >>"$BUILDROOT/etc/group"
+	[[ -f $BUILDROOT/etc/shadow ]] &&
+		printf '%s:*:::::::\n' "$_testuser" >>"$BUILDROOT/etc/shadow"
+
+	return 0
+}
+
+help() {
+	cat <<-__EOF_HELP__
+		Test-only hook. Appends an unprivileged login to an image that already has
+		a user database, so the boot test can open a Tailscale SSH session as
+		someone other than root. Not for production use.
+	__EOF_HELP__
+}
+
+# vim: noexpandtab
