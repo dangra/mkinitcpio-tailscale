@@ -41,39 +41,91 @@ yay -S mkinitcpio-tailscale
 
 ## Configure
 
-Run the helper and follow the prompts:
+### 1. Register the initrd node
 
 ```sh
 sudo setup-initcpio-tailscale
 ```
 
-This will register a new Tailscale node using a hostname based on your system.
-For example, if your host is named `homeserver`, the node will appear as
-`homeserver-initrd` in the Tailscale admin panel, which makes it easy to
-identify.
+The helper starts a throwaway `tailscaled` and prints a URL and QR code to
+authenticate with; it does not touch the Tailscale service your booted system
+runs. Any extra arguments are passed straight through to `tailscale up`, so
+flags like `--login-server=` work as usual.
 
-Next, edit `/etc/mkinitcpio.conf` and add `tailscale` to the `HOOKS` array.
+It registers a node named after your host with an `-initrd` suffix — a machine
+called `homeserver` appears as `homeserver-initrd` — and leaves its key in
+`/etc/initcpio/tailscale/`.
 
-- For systemd-based initramfs, place the `tailscale` hook anywhere after the
-  `systemd` hook.
-- For busybox-based initramfs, add it after network-related hooks but before
-  blocking hooks like `encrypt` / `encryptssh`.
+**Disable key expiry for that node** in the [machines
+list](https://login.tailscale.com/admin/machines). Node keys expire by default,
+and an expired initrd node cannot reach your tailnet — which you would discover
+while locked out of a machine that is waiting for its passphrase.
 
-Example (conceptual):
+### 2. Give the initramfs a network
+
+Nothing in mkinitcpio's stock hooks brings up networking, and `tailscaled`
+cannot do anything without an address. Add one of these alongside this hook:
+
+| initramfs | hook | package | configured by |
+| --------- | ---- | ------- | ------------- |
+| systemd   | `sd-network` | `mkinitcpio-systemd-extras` (AUR)   | `.network` files copied from `/etc/systemd/network` |
+| busybox   | `net`        | `mkinitcpio-nfs-utils` (core)       | the `ip=` kernel parameter |
+| busybox   | `netconf`    | [`mkinitcpio-extras`][extras] (AUR) | the `ip=` kernel parameter |
+
+Both busybox hooks take the same parameter, and either works with this hook —
+they differ in what they can be told to do and where they come from:
 
 ```text
-HOOKS=(base systemd autodetect modconf block filesystems keyboard fsck tailscale)
-# or for busybox-based initramfs: ensure tailscale is before encrypt
+ip=192.168.1.50::192.168.1.1:255.255.255.0::eth0:none    # static, both hooks
+ip=dhcp                                                  # netconf
 ```
 
-After editing `mkinitcpio.conf`, regenerate your initramfs:
+`net` comes from the official repositories and needs no AUR build, which is
+reason enough to prefer it when the machine has a fixed address. Its DHCP client
+did not come up in testing, so reach for `netconf` if you need `ip=dhcp` —
+that is also what the ArchWiki's remote-unlock guide uses, and
+[`mkinitcpio-extras`][extras] is the maintained replacement for the retired
+`mkinitcpio-netconf`, `mkinitcpio-dropbear` and `mkinitcpio-tinyssh`, so it is
+the one to pick if you also want a `dropbear` or `tinyssh` alongside.
+
+Use the kernel's device name (`eth0`) rather than the name the booted system
+shows (`enp1s0`) — the predictable names are not in effect this early. For
+`sd-network`, match on a glob (`Name=en*`) instead of one fixed name, for the
+same reason.
+
+### 3. Add the hook
+
+Edit `/etc/mkinitcpio.conf` and put `tailscale` after the network hook and
+before whatever blocks waiting for a passphrase — `sd-encrypt`, `encrypt` or
+`encryptssh`:
+
+```text
+# systemd-based
+HOOKS=(base systemd autodetect microcode modconf kms keyboard sd-vconsole block sd-network tailscale sd-encrypt filesystems fsck)
+
+# busybox-based
+HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block net tailscale encrypt filesystems fsck)
+```
+
+On a systemd-based initramfs `tailscale` **must** come after `systemd`. The hook
+decides which kind of image it is building by looking for helpers that the
+`systemd` hook defines, so listing it earlier silently produces the busybox
+layout — which a systemd initramfs never runs, leaving you with an image that
+builds cleanly and never connects.
+
+### 4. Rebuild and check
 
 ```sh
 sudo mkinitcpio -P
-# or: sudo mkinitcpio -p linux
 ```
 
-This updates your initramfs so the new hook and node key are included.
+Before rebooting a machine you cannot walk up to, confirm the image really
+carries Tailscale and that the node is live:
+
+```sh
+lsinitcpio -l /boot/initramfs-linux.img | grep tailscale
+tailscale status | grep -- -initrd    # from any other node on your tailnet
+```
 
 ### Tailscale SSH server
 
@@ -104,11 +156,13 @@ a busybox-based initramfs this hook therefore writes a minimal one itself —
 contains. Where a database already exists it is left untouched, so a
 systemd-based image keeps the richer one mkinitcpio built.
 
-That also fixes the same problem for other SSH servers in early userspace: the
-`mkinitcpio-dropbear` and `mkinitcpio-tinyssh` hooks do not ship a user database
-either, and without one both daemons start, accept the connection and then
-refuse every login with `Permission denied (publickey)`. With this hook in
-`HOOKS` they work as expected.
+That also fixes the same problem for other SSH servers in early userspace.
+Without a user database `dropbear` and `tinyssh` start, accept the connection,
+and then refuse every login with `Permission denied (publickey)` — the old
+standalone hooks never wrote one, and the maintained `mkinitcpio-extras` fork
+does so only if you turn its root-shell option on. This hook writes one whenever
+the image has none, so they work either way, and skips it when a database is
+already there, so the two cannot collide.
 
 **Run one SSH server, not two.** When Tailscale SSH is enabled, tailscaled
 answers port 22 on the tailnet itself, so a dropbear or tinyssh in the same
@@ -248,6 +302,7 @@ AUR_REMOTE=/tmp/fake-aur.git ./scripts/aur-publish.sh --tag v1.2.0
 [gh3]: https://github.com/classabbyamp
 [gh4]: https://github.com/wolegis
 [aur]: https://aur.archlinux.org/packages/mkinitcpio-tailscale
+[extras]: https://aur.archlinux.org/packages/mkinitcpio-extras
 [1]: https://wiki.archlinux.org/title/Mkinitcpio
 [2]: https://tailscale.com
 [3]: https://wiki.archlinux.org/title/dm-crypt/Encrypting_an_entire_system#Configuring_mkinitcpio_2
