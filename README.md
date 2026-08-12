@@ -1,23 +1,35 @@
 # mkinitcpio-tailscale
 
-This project provides a [mkinitcpio][1] hook that lets you connect to your
-[Tailscale][2] network from inside the initramfs (the early userspace
-environment, before the system switches to the final root filesystem).
+Reach an Arch Linux machine over [Tailscale][2] while it is still in early boot,
+before the root filesystem has been unlocked.
 
-It's particularly useful for remotely unlocking systems with encrypted root
-filesystems. For setup details on decrypting the rootfs and adding remote unlock
-support, see the Arch Linux Wiki pages linked below. If you use the built-in
-Tailscale SSH server you do not need an additional SSH server — see the section
-on the Tailscale SSH server for details.
+A server with an encrypted root cannot finish booting on its own: it stops in
+the initramfs and waits for a passphrase. When that machine is in another room —
+or another country — a kernel update or a power cut leaves it sitting at that
+prompt until somebody walks up to a keyboard.
 
-- [Mkinitcpio][1]
-- [Tailscale][2]
+This project provides a [mkinitcpio][1] hook that starts `tailscaled` inside the
+initramfs, so the machine joins your tailnet before it mounts its root
+filesystem. It registers as a device of its own — `homeserver-initrd` for a host
+called `homeserver` — separate from the Tailscale node the booted system runs,
+so you can SSH in, enter the passphrase, and let the boot carry on.
+
+Because the path is Tailscale, nothing is exposed to the internet: no port
+forwarding, no firewall holes, no SSH server for the rest of the world to knock
+on. Who may reach the machine is decided by your tailnet ACLs and can be
+narrowed to the initrd device alone — see [Security
+considerations](#security-considerations), which also covers the trade-off of
+keeping a node key in an unencrypted initramfs.
+
+Tailscale's built-in SSH server works here as well, so no separate `dropbear` or
+`tinyssh` is needed — see [Tailscale SSH server](#tailscale-ssh-server). Both
+systemd- and busybox-based initramfs images are supported.
+
+Unlocking the root filesystem is configured separately; the ArchWiki covers that
+half:
+
 - ArchWiki: [dm-crypt / Encrypting an entire system — Configuring mkinitcpio][3]
 - ArchWiki: [Dm-crypt — Remote unlocking of root (or other) partition][4]
-
-By combining mkinitcpio with Tailscale you get a secure VPN path to your locked
-server from anywhere — no need to expose SSH to the internet or open firewall
-ports.
 
 ## Installation
 
