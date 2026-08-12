@@ -55,9 +55,13 @@ if ((WANTS_ALL)) || want 04; then
 	[[ -e /dev/kvm ]] && RUN_OPTS+=(--device /dev/kvm)
 fi
 
+# PKGS and STAGES are passed in as environment variables and expanded by the
+# shell inside the container, so the script below is deliberately single-quoted.
+# shellcheck disable=SC2016
 exec "$ENGINE" run --rm "${RUN_OPTS[@]}" \
 	-v "$REPO:/src:ro" -w /src \
 	-e "STAGES=${STAGES[*]}" \
+	-e "PKGS=${PKGS[*]}" \
 	"$IMAGE" \
 	bash -euo pipefail -c '
 		# Installing a kernel triggers mkinitcpio -P against the stock preset,
@@ -69,7 +73,7 @@ exec "$ENGINE" run --rm "${RUN_OPTS[@]}" \
 		# mkinitcpio is named explicitly because the linux package depends on
 		# the virtual "initramfs" provider and --noconfirm would otherwise be
 		# free to pick dracut.
-		pacman -Syu --noconfirm --needed '"${PKGS[*]}"' >/dev/null
+		pacman -Syu --noconfirm --needed $PKGS >/dev/null
 
 		# makepkg refuses to run as root; tests/run.sh drops to this user.
 		useradd -m builder 2>/dev/null || true

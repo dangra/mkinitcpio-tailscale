@@ -5,6 +5,7 @@
 # mkinitcpio's -D flag, so this needs nothing installed and is fast to iterate
 # on. Pass --installed to test /usr/lib/initcpio/{install,hooks}/tailscale as
 # laid down by the built package instead.
+# shellcheck source-path=SCRIPTDIR
 set -uo pipefail
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 . "$(dirname -- "${BASH_SOURCE[0]}")/fixtures.sh"

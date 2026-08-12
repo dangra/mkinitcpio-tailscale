@@ -8,6 +8,7 @@
 # makepkg refuses to run as root, and that guard covers --printsrcinfo and the
 # `makepkg -g` that updpkgsums shells out to, so this whole script must run
 # unprivileged.
+# shellcheck source-path=SCRIPTDIR
 set -uo pipefail
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 
