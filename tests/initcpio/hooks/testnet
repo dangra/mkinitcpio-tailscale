@@ -1,9 +1,11 @@
-#!/usr/bin/env bash
+#!/usr/bin/ash
+# shellcheck shell=bash
 # Test-only mkinitcpio runtime hook: the busybox counterpart of the networkd
 # setup in tests/initcpio/install/testnet.
 #
-# Runs under busybox ash inside the initramfs, so it stays POSIX and uses only
-# what the base hook puts in the image (the busybox `ip` applet).
+# Sourced by /init under busybox ash, so it sticks to what busybox accepts and
+# to what the base hook puts in the image (the `ip` applet). Shebang and lint
+# directive match the shipped runtime hook, for the same reasons.
 #
 # It is scaffolding for the test suite and is not part of the shipped package.
 

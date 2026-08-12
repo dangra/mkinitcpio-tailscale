@@ -130,6 +130,13 @@ in_list() { grep -qxF -- "$1" "$LIST"; }
 # Shared expectations for every successful build.
 assert_common() {
 	local label=$1
+
+	# A runtime hook whose shebang names an interpreter the image does not ship
+	# makes mkinitcpio warn on every rebuild the user runs. Cheap to keep quiet,
+	# and the warning is exactly the kind of noise that trains people to ignore
+	# mkinitcpio's output.
+	check_fails "$label: the build logs no missing-interpreter warning" \
+		grep -q 'Possibly missing' "$LOG"
 	check "$label: tailscaled binary" in_list usr/bin/tailscaled
 	check "$label: tailscale binary" in_list usr/bin/tailscale
 	check "$label: getent" in_list usr/bin/getent

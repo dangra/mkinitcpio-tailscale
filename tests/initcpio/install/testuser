@@ -23,8 +23,11 @@ _testuser=citest
 _testuid=1042
 
 build() {
-	if [[ ! -f $BUILDROOT/etc/passwd ]]; then
-		warning "testuser: no /etc/passwd in the image; leaving it that way"
+	# Both files, not just passwd: appending to a database that is missing half
+	# of itself would create the other half here, which is the creating this hook
+	# promises not to do.
+	if [[ ! -f $BUILDROOT/etc/passwd || ! -f $BUILDROOT/etc/group ]]; then
+		warning "testuser: no user database in the image; leaving it that way"
 		return 0
 	fi
 
