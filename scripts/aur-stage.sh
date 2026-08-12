@@ -136,6 +136,14 @@ chmod 755 "$OUTDIR/setup-initcpio-tailscale"
 # `git add` silently skip it.
 sed -i '/^\.SRCINFO$/d' "$OUTDIR/.gitignore"
 
+# Drop the template-only preamble. On the AUR the published PKGBUILD is a
+# finished definition, so a comment calling it a template and pointing at
+# `make build` and scripts/ -- none of which exist there -- is actively
+# misleading to anyone reading it before installing.
+sed -i '/^# aur-stage:strip-start$/,/^# aur-stage:strip-end$/d' "$OUTDIR/PKGBUILD"
+grep -q 'aur-stage:strip' "$OUTDIR/PKGBUILD" &&
+	die 'strip markers left in the staged PKGBUILD'
+
 # Order matters: the version has to be final before checksums are generated, and
 # both before .SRCINFO is written from the result.
 if [[ -n $TAG ]]; then
