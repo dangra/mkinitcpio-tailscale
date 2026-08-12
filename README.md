@@ -68,27 +68,30 @@ cannot do anything without an address. Add one of these alongside this hook:
 
 | initramfs | hook | package | configured by |
 | --------- | ---- | ------- | ------------- |
-| systemd   | `sd-network` | `mkinitcpio-systemd-extras` (AUR)     | `.network` files copied from `/etc/systemd/network` |
-| busybox   | `net`        | `mkinitcpio-nfs-utils` (official repos) | the `ip=` kernel parameter |
+| systemd   | `sd-network` | `mkinitcpio-systemd-extras` (AUR)   | `.network` files copied from `/etc/systemd/network` |
+| busybox   | `net`        | `mkinitcpio-nfs-utils` (core)       | the `ip=` kernel parameter |
+| busybox   | `netconf`    | [`mkinitcpio-extras`][extras] (AUR) | the `ip=` kernel parameter |
 
-On busybox the ArchWiki's remote-unlock guide reaches for `netconf` instead,
-from [`mkinitcpio-extras`](https://aur.archlinux.org/packages/mkinitcpio-extras);
-that package is worth knowing about if you also want `dropbear` or `tinyssh`, as
-it replaces the unmaintained `mkinitcpio-netconf`, `mkinitcpio-dropbear` and
-`mkinitcpio-tinyssh`. Either hook configures the interface from the same `ip=`
-kernel parameter:
+Both busybox hooks take the same parameter, and either works with this hook —
+they differ in what they can be told to do and where they come from:
 
 ```text
-ip=192.168.1.50::192.168.1.1:255.255.255.0::eth0:none
+ip=192.168.1.50::192.168.1.1:255.255.255.0::eth0:none    # static, both hooks
+ip=dhcp                                                  # netconf
 ```
 
-Use the kernel's device name (`eth0`) rather than the name the booted system
-shows (`enp1s0`) — the predictable names are not in effect this early. A static
-assignment is the form this project is tested against; `ip=dhcp` leans on the
-hook's own DHCP client, which is a separate thing to get working.
+`net` comes from the official repositories and needs no AUR build, which is
+reason enough to prefer it when the machine has a fixed address. Its DHCP client
+did not come up in testing, so reach for `netconf` if you need `ip=dhcp` —
+that is also what the ArchWiki's remote-unlock guide uses, and
+[`mkinitcpio-extras`][extras] is the maintained replacement for the retired
+`mkinitcpio-netconf`, `mkinitcpio-dropbear` and `mkinitcpio-tinyssh`, so it is
+the one to pick if you also want a `dropbear` or `tinyssh` alongside.
 
-For `sd-network`, match on a glob (`Name=en*`) instead of one fixed name, for
-the same reason.
+Use the kernel's device name (`eth0`) rather than the name the booted system
+shows (`enp1s0`) — the predictable names are not in effect this early. For
+`sd-network`, match on a glob (`Name=en*`) instead of one fixed name, for the
+same reason.
 
 ### 3. Add the hook
 
@@ -299,6 +302,7 @@ AUR_REMOTE=/tmp/fake-aur.git ./scripts/aur-publish.sh --tag v1.2.0
 [gh3]: https://github.com/classabbyamp
 [gh4]: https://github.com/wolegis
 [aur]: https://aur.archlinux.org/packages/mkinitcpio-tailscale
+[extras]: https://aur.archlinux.org/packages/mkinitcpio-extras
 [1]: https://wiki.archlinux.org/title/Mkinitcpio
 [2]: https://tailscale.com
 [3]: https://wiki.archlinux.org/title/dm-crypt/Encrypting_an_entire_system#Configuring_mkinitcpio_2
