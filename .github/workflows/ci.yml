@@ -25,7 +25,7 @@ jobs:
       - name: Bootstrap
         run: pacman -Syu --noconfirm --needed git shellcheck mkinitcpio
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Findings from shellcheck are reported but do not fail the build; syntax
       # errors do. See tests/01-lint.sh.
@@ -45,7 +45,7 @@ jobs:
           # --printsrcinfo and the `makepkg -g` that updpkgsums shells out to.
           useradd -m builder
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Prepare workspace
         run: |
@@ -58,7 +58,7 @@ jobs:
         env:
           ARTIFACT_DIR: ${{ github.workspace }}/dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: package
           path: dist/*.pkg.tar.zst
@@ -86,7 +86,7 @@ jobs:
           pacman -Syu --noconfirm --needed \
             git mkinitcpio linux tailscale iptables openssh
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Builds real images for the systemd, busybox and Tailscale-SSH variants
       # and asserts on their contents. Uses the hook files from the working tree
@@ -97,7 +97,7 @@ jobs:
         env:
           ARTIFACT_DIR: ${{ github.workspace }}/logs
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: initramfs-logs
@@ -109,7 +109,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Deliberately not a `container:` job. tests/container.sh only passes
       # --device /dev/kvm when the device exists, so a runner without KVM falls
@@ -123,7 +123,7 @@ jobs:
           ENGINE: docker
           ARTIFACT_DIR: ${{ github.workspace }}/logs
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: boot-logs
