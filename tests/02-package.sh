@@ -58,7 +58,6 @@ find "$STAGE" -mindepth 1 -printf '%P\n' | LC_ALL=C sort >"$WORK/staged.files"
 if diff -u - "$WORK/staged.files" >"$WORK/staged.diff" <<-'EOF'; then
 	.SRCINFO
 	.gitignore
-	Makefile
 	PKGBUILD
 	README.md
 	initcpio-hooks-tailscale

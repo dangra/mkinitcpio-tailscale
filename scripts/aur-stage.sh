@@ -21,10 +21,13 @@ die() {
 
 # The complete set of files that belong in a release. .SRCINFO is generated
 # below rather than listed here.
+#
+# No Makefile: every target references scripts/ or tests/, neither of which is
+# published, so it would be dead weight in an AUR checkout. Users there build
+# the already-generated PKGBUILD with makepkg directly.
 AUR_FILES=(
 	PKGBUILD
 	.gitignore
-	Makefile
 	README.md
 	initcpio-hooks-tailscale
 	initcpio-install-tailscale
