@@ -175,7 +175,13 @@ HEADSCALE=${HEADSCALE_BIN:-$WORK/headscale}
 if [[ ! -x $HEADSCALE ]]; then
 	url="https://github.com/juanfont/headscale/releases/download/v${HEADSCALE_VERSION}/headscale_${HEADSCALE_VERSION}_linux_amd64"
 	info "downloading headscale $HEADSCALE_VERSION"
-	curl -fsSL -o "$HEADSCALE" "$url" || die "failed to download $url"
+	# The one thing in this test that depends on somebody else's uptime, and a
+	# single 503 from the release CDN has already failed a run on master.
+	# --retry alone covers the 5xx and timeout cases; --retry-all-errors extends
+	# it to a connection dropped mid-transfer, which is the other way a CDN
+	# fails. The download is checksummed below either way.
+	curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors \
+		-o "$HEADSCALE" "$url" || die "failed to download $url"
 
 	if [[ -n ${HEADSCALE_SHA256:-} ]]; then
 		got=$(sha256sum "$HEADSCALE" | cut -d' ' -f1)
