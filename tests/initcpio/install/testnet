@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Test-only mkinitcpio hook: brings systemd-networkd up inside the initramfs so
+# the QEMU guest in tests/04-boot.sh can reach the control server.
+#
+# This stands in for the sd-network hook from mkinitcpio-systemd-extras, which
+# lives in the AUR. Depending on an AUR build would make CI slower and give the
+# boot test a way to fail for reasons that have nothing to do with this package.
+#
+# It is scaffolding for the test suite and is not part of the shipped package.
+
+build() {
+	add_systemd_unit systemd-networkd.service
+	add_systemd_unit systemd-networkd.socket
+
+	# DefaultDependencies=no on tailscaled.service means it can start before the
+	# network exists, so networkd has to come up in sysinit.target alongside it.
+	add_symlink /etc/systemd/system/sysinit.target.wants/systemd-networkd.service \
+		/usr/lib/systemd/system/systemd-networkd.service
+
+	add_file "${TESTNET_CONFIG:-/etc/systemd/network/10-ci.network}" \
+		/etc/systemd/network/10-ci.network
+
+	# systemd-networkd.service drops privileges to this user.
+	local db
+	for db in passwd group shadow; do
+		grep "^systemd-network:" "/etc/$db" >>"$BUILDROOT/etc/$db" 2>/dev/null
+	done
+
+	return 0
+}
+
+help() {
+	cat <<-__EOF_HELP__
+		Test-only hook. Enables systemd-networkd inside the initramfs and copies a
+		single .network file, so the boot test's guest can get an address from
+		QEMU's user-mode DHCP. Not for production use.
+	__EOF_HELP__
+}
+
+# vim: noexpandtab
