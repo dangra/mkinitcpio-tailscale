@@ -304,6 +304,13 @@ That runs the full test suite and, only if it passes, publishes to the AUR: a
 curated tree of packaging files only, never `tests/` or `.github/`. Use
 `v<version>-<rel>` for a packaging-only rebuild of a version already published.
 
+Once the AUR push has landed, the same workflow opens a [GitHub
+release][releases] for the tag, with the built `.pkg.tar.zst` attached — built
+from the staged tree, not taken from the test suite's artifact, which is
+deliberately labelled `9.9.9-3`. Tags and releases go back to `0.1-6`; the ones
+before `1.2.0` were published by hand and were tagged after the fact, so they
+carry notes but no package.
+
 Every pull request, and every push to `master`, runs the same release path in
 dry-run mode against the live AUR repository — which clones anonymously over
 HTTPS, so no credentials are involved — and prints the diff it would push. The
@@ -337,6 +344,7 @@ AUR_REMOTE=/tmp/fake-aur.git ./scripts/aur-publish.sh --tag v1.2.0
 [gh3]: https://github.com/classabbyamp
 [gh4]: https://github.com/wolegis
 [aur]: https://aur.archlinux.org/packages/mkinitcpio-tailscale
+[releases]: https://github.com/dangra/mkinitcpio-tailscale/releases
 [extras]: https://aur.archlinux.org/packages/mkinitcpio-extras
 [1]: https://wiki.archlinux.org/title/Mkinitcpio
 [2]: https://tailscale.com

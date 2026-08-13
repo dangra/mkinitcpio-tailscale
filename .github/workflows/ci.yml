@@ -228,3 +228,62 @@ jobs:
             GIT_AUTHOR_NAME="$GIT_AUTHOR_NAME" \
             GIT_AUTHOR_EMAIL="$GIT_AUTHOR_EMAIL" \
             ./scripts/aur-publish.sh "$@"
+
+  # The GitHub side of a release, once the AUR side has landed. Only a tag gets
+  # here, and only if publish succeeded, so a release page never advertises a
+  # version the AUR does not have.
+  release:
+    name: release
+    if: github.ref_type == 'tag'
+    needs: [publish]
+    runs-on: ubuntu-latest
+    # An Arch container rather than the plain runner: the asset is built with
+    # makepkg, from the same staged tree the AUR gets.
+    container: archlinux:base-devel
+    permissions:
+      # The workflow default is read-only; creating a release needs to write.
+      contents: write
+    timeout-minutes: 20
+    steps:
+      - name: Bootstrap
+        run: |
+          pacman -Syu --noconfirm --needed git pacman-contrib github-cli
+          # makepkg, --printsrcinfo and updpkgsums all refuse to run as root.
+          useradd -m builder
+
+      - uses: actions/checkout@v7
+
+      - name: Prepare the workspace
+        run: |
+          git config --system --add safe.directory "$GITHUB_WORKSPACE"
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      # Not the artifact from the package job: tests/02-package.sh stages with
+      # the fake tag v9.9.9-3, so what it builds is labelled 9.9.9-3.
+      - name: Build the package for this tag
+        run: |
+          runuser -u builder -- ./scripts/aur-stage.sh "$GITHUB_WORKSPACE/stage" \
+            --tag "$GITHUB_REF_NAME"
+          runuser -u builder -- env -C "$GITHUB_WORKSPACE/stage" \
+            makepkg --noconfirm --nodeps --force
+
+      - name: Create the release
+        env:
+          # gh in a container has neither credentials nor a repo to infer.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # Re-running the job must not fail on a release that already exists.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists, nothing to do"
+            exit 0
+          fi
+          # The staged PKGBUILD is the single source of truth for the version;
+          # aur-stage.sh has already resolved the tag into it.
+          pkgver=$(sed -n 's/^pkgver=//p' stage/PKGBUILD)
+          pkgrel=$(sed -n 's/^pkgrel=//p' stage/PKGBUILD)
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes "Published to the AUR as \`mkinitcpio-tailscale ${pkgver}-${pkgrel}\`." \
+            --generate-notes \
+            stage/*.pkg.tar.zst
