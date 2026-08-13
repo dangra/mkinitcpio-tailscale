@@ -282,8 +282,14 @@ jobs:
           # aur-stage.sh has already resolved the tag into it.
           pkgver=$(sed -n 's/^pkgver=//p' stage/PKGBUILD)
           pkgrel=$(sed -n 's/^pkgrel=//p' stage/PKGBUILD)
+          # The publish job ran minutes ago, so today is the date this version
+          # reached the AUR. Every release carries it: GitHub's own "released"
+          # timestamp is not settable, which the releases backfilled in August
+          # 2026 all show as the day they were written rather than the day they
+          # shipped.
+          today=$(date -u +'%-d %B %Y')
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
-            --notes "Published to the AUR as \`mkinitcpio-tailscale ${pkgver}-${pkgrel}\`." \
+            --notes "Published to the AUR as \`mkinitcpio-tailscale ${pkgver}-${pkgrel}\` on ${today}." \
             --generate-notes \
             stage/*.pkg.tar.zst
