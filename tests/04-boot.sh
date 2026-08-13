@@ -11,7 +11,7 @@
 # state copied into the image -> tailscaled started inside the initramfs ->
 # network up -> node reachable on the tailnet -> reachable *as the same host*
 # a client already knows. It also gives setup-initcpio-tailscale its only
-# coverage, via the non-interactive --authkey --ssh path.
+# coverage, via the non-interactive --authkey path.
 #
 # One boot per branch of the install hook, since the two produce genuinely
 # different images and the runtime hook only runs in the second:
@@ -19,8 +19,10 @@
 #   systemd   HOOKS=(base systemd ... tailscale)   tailscaled.service
 #   busybox   HOOKS=(base udev ... tailscale)      initcpio-hooks-tailscale
 #
-# Both register with --ssh: that state is a superset of the plain one, so two
-# boots cover both branches and the ssh path. The images also carry the two
+# Both register with Tailscale SSH, which is what the setup helper does when
+# left alone: that state is a superset of the plain one, so two boots cover both
+# branches and the ssh path. The --no-ssh side is asserted on the configuration
+# the helper writes, without a boot of its own. The images also carry the two
 # test-only hooks under tests/initcpio -- testnet for an address on QEMU's
 # user-mode network, testuser for the login the ssh assertions use.
 #
@@ -323,12 +325,13 @@ group 'setup-initcpio-tailscale against headscale'
 for sc in "${SCENARIOS[@]}"; do
 	node="${TS_NODE_NAME}-${SC_SUFFIX[$sc]}"
 
+	# No --ssh: Tailscale SSH is the default, and the host key assertions further
+	# down are what proves the default took effect.
 	rm -rf "$TS_SETUPDIR"
 	if "$SETUP_HELPER" \
 		--hostname="$node" \
 		--login-server="$SERVER_URL" \
-		--authkey="$AUTHKEY" \
-		--ssh >"$WORK/setup.$sc.log" 2>&1; then
+		--authkey="$AUTHKEY" >"$WORK/setup.$sc.log" 2>&1; then
 		pass "$sc: setup-initcpio-tailscale registers $node"
 	else
 		fail "$sc: setup-initcpio-tailscale registers $node" "$(cat "$WORK/setup.$sc.log")"
@@ -348,6 +351,29 @@ for sc in "${SCENARIOS[@]}"; do
 	# back immediately before the image that needs it is built.
 	cp -a "$TS_SETUPDIR" "$WORK/state.$sc"
 done
+endgroup
+
+# --- the opt-out ----------------------------------------------------------
+# Deliberately run over the directory the loop above left behind, host keys and
+# all: --no-ssh has to clear them, or every image built afterwards would still
+# carry keys for an ssh server this node no longer runs.
+group 'setup-initcpio-tailscale --no-ssh'
+check 'the previous run left host keys behind' test -d "$TS_SETUPDIR/ssh"
+if "$SETUP_HELPER" \
+	--hostname="${TS_NODE_NAME}-nossh" \
+	--login-server="$SERVER_URL" \
+	--authkey="$AUTHKEY" \
+	--no-ssh >"$WORK/setup.nossh.log" 2>&1; then
+	pass '--no-ssh registers the node'
+else
+	fail '--no-ssh registers the node' "$(cat "$WORK/setup.nossh.log")"
+fi
+check '--no-ssh still wrote tailscaled.state' test -s "$TS_SETUPDIR/tailscaled.state"
+check_fails '--no-ssh leaves no host keys behind' test -e "$TS_SETUPDIR/ssh"
+# 'tailscale up' has no --no-ssh flag, so a pass-through would have failed the
+# registration above with "flag provided but not defined".
+check_fails '--no-ssh never reached tailscale up' \
+	grep -q 'not defined' "$WORK/setup.nossh.log"
 endgroup
 
 # --- a client on the tailnet ----------------------------------------------

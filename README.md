@@ -21,8 +21,8 @@ narrowed to the initrd device alone — see [Security
 considerations](#security-considerations), which also covers the trade-off of
 keeping a node key in an unencrypted initramfs.
 
-Tailscale's built-in SSH server works here as well, so no separate `dropbear` or
-`tinyssh` is needed — see [Tailscale SSH server](#tailscale-ssh-server). Both
+Tailscale's built-in SSH server is enabled by default, so no separate `dropbear`
+or `tinyssh` is needed — see [Tailscale SSH server](#tailscale-ssh-server). Both
 systemd- and busybox-based initramfs images are supported.
 
 Unlocking the root filesystem is configured separately; the ArchWiki covers that
@@ -53,8 +53,10 @@ runs. Any extra arguments are passed straight through to `tailscale up`, so
 flags like `--login-server=` work as usual.
 
 It registers a node named after your host with an `-initrd` suffix — a machine
-called `homeserver` appears as `homeserver-initrd` — and leaves its key in
-`/etc/initcpio/tailscale/`.
+called `homeserver` appears as `homeserver-initrd` — with [Tailscale
+SSH](#tailscale-ssh-server) turned on, and leaves the node key and the SSH host
+keys in `/etc/initcpio/tailscale/`. Pass `--no-ssh` if you would rather run
+`dropbear` or `tinyssh` in the image instead.
 
 **Disable key expiry for that node** in the [machines
 list](https://login.tailscale.com/admin/machines). Node keys expire by default,
@@ -129,24 +131,31 @@ tailscale status | grep -- -initrd    # from any other node on your tailnet
 
 ### Tailscale SSH server
 
-Tailscale includes a built-in SSH server. If you enable it when running the
-setup helper, you don't need `dropbear`, `tinyssh`, or another SSH server inside
-initramfs.
-
-Enable it with:
+Tailscale includes a built-in SSH server, and `setup-initcpio-tailscale` turns it
+on unless told otherwise, so you need no `dropbear`, `tinyssh`, or other SSH
+server inside the initramfs. Logging in is then:
 
 ```sh
-sudo setup-initcpio-tailscale --ssh
+ssh root@homeserver-initrd
 ```
+
+Turn it off with:
+
+```sh
+sudo setup-initcpio-tailscale --no-ssh
+```
+
+which also removes any host keys an earlier run left in
+`/etc/initcpio/tailscale/`, so they stop being copied into new images.
 
 Note: the Tailscale SSH server only accepts connections from within your
 tailnet. The node won’t accept local connections unless the client is also part
 of your Tailscale network — this reduces exposure compared to a traditional SSH
 server reachable from everywhere.
 
-`setup-initcpio-tailscale --ssh` also generates OpenSSH host keys and stores them
-alongside the node key, so the initramfs presents the same host key every time
-and your client does not warn about a changed identity.
+The helper also generates OpenSSH host keys and stores them alongside the node
+key, so the initramfs presents the same host key every time and your client does
+not warn about a changed identity.
 
 Works on systemd- and busybox-based initramfs alike, though the second needs a
 hand: Tailscale's SSH server has to resolve the user you log in as, and of the
@@ -167,8 +176,8 @@ already there, so the two cannot collide.
 **Run one SSH server, not two.** When Tailscale SSH is enabled, tailscaled
 answers port 22 on the tailnet itself, so a dropbear or tinyssh in the same
 initramfs never sees those connections — it still answers on other interfaces,
-but not on the address you would actually reach it at. Either register with
-`--ssh` and use Tailscale SSH, or leave `--ssh` off and use your own daemon.
+but not on the address you would actually reach it at. Either keep the default
+and use Tailscale SSH, or register with `--no-ssh` and use your own daemon.
 
 The test suite covers this end to end on both branches: it boots the image, logs
 in over Tailscale SSH from a second node on a throwaway tailnet, and checks the
@@ -234,9 +243,11 @@ make test-all    # adds the QEMU boot tests against a local headscale
 ```
 
 `make test-all` boots two images against a throwaway headscale — one systemd,
-one busybox, both registered with `--ssh` — and checks each node comes online,
-then logs in over Tailscale SSH and compares the host key it is offered with the
-one `setup-initcpio-tailscale` generated. A single scenario can be run on its
+one busybox, both registered the way the setup helper registers them when left
+alone — and checks each node comes online, then logs in over Tailscale SSH and
+compares the host key it is offered with the one `setup-initcpio-tailscale`
+generated. The `--no-ssh` opt-out is checked there too, on the configuration it
+writes rather than with a boot of its own. A single scenario can be run on its
 own:
 
 ```sh
