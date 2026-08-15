@@ -415,6 +415,56 @@ check 'H: rebuilds for the drop-in too' grep -qx -- '-P' "$ALPM_CALLS"
 restore_conf
 endgroup
 
+# --- setup-initcpio-tailscale --check --------------------------------------
+# Same fabricated-configuration approach as variant H. The image inspection
+# arm is exercised implicitly as its "nothing to inspect" warning: the
+# container has no /boot images, which must not fail the check on its own.
+group 'variant I: --check verifies a setup without touching it'
+
+if ((USE_INSTALLED)); then
+	SETUP_HELPER=/usr/bin/setup-initcpio-tailscale
+else
+	SETUP_HELPER="$REPO_ROOT/setup-initcpio-tailscale"
+fi
+[[ -f $SETUP_HELPER ]] || die "setup helper not found: $SETUP_HELPER"
+
+run_doctor() { bash "$SETUP_HELPER" --check >"$WORK/doctor.log" 2>&1; }
+
+fixtures_write --ssh
+printf 'HOOKS=(base systemd sd-network tailscale sd-encrypt filesystems)\n' \
+	>/etc/mkinitcpio.conf
+rm -rf /etc/mkinitcpio.conf.d
+check 'I: a correct setup passes' run_doctor
+
+printf 'HOOKS=(base tailscale systemd sd-network sd-encrypt filesystems)\n' \
+	>/etc/mkinitcpio.conf
+check_fails 'I: tailscale before systemd fails' run_doctor
+check 'I: and the report names systemd' grep -q "before 'systemd'" "$WORK/doctor.log"
+
+printf 'HOOKS=(base systemd sd-network sd-encrypt filesystems)\n' \
+	>/etc/mkinitcpio.conf
+check_fails 'I: tailscale missing from HOOKS= fails' run_doctor
+
+printf 'HOOKS=(base systemd sd-network sd-encrypt tailscale filesystems)\n' \
+	>/etc/mkinitcpio.conf
+check_fails 'I: tailscale after sd-encrypt fails' run_doctor
+check 'I: and the report names the encrypt hook' \
+	grep -q "after 'sd-encrypt'" "$WORK/doctor.log"
+
+printf 'HOOKS=(base systemd tailscale sd-encrypt filesystems)\n' \
+	>/etc/mkinitcpio.conf
+check 'I: a missing network hook is not fatal' run_doctor
+check 'I: but is warned about' grep -q 'WARN .*network hook' "$WORK/doctor.log"
+
+printf 'HOOKS=(base systemd sd-network tailscale sd-encrypt filesystems)\n' \
+	>/etc/mkinitcpio.conf
+rm -rf "$TS_SETUPDIR"
+check_fails 'I: missing configuration fails' run_doctor
+check 'I: and points at this helper' grep -q 'run setup-initcpio-tailscale' "$WORK/doctor.log"
+
+restore_conf
+endgroup
+
 if ((TESTS_FAILED)) && [[ -n ${ARTIFACT_DIR:-} ]]; then
 	install -d "$ARTIFACT_DIR"
 	cp "$WORK"/build.*.log "$ARTIFACT_DIR/" 2>/dev/null || true

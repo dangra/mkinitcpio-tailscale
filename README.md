@@ -122,11 +122,19 @@ builds cleanly and never connects.
 sudo mkinitcpio -P
 ```
 
-Before rebooting a machine you cannot walk up to, confirm the image really
-carries Tailscale and that the node is live:
+Before rebooting a machine you cannot walk up to, confirm the setup end to
+end:
 
 ```sh
-lsinitcpio -l /boot/initramfs-linux.img | grep tailscale
+sudo setup-initcpio-tailscale --check
+```
+
+It verifies, without changing anything, that the configuration files exist,
+that `tailscale` sits correctly in `HOOKS=` (after `systemd`, after the
+network hook, before the encrypt hook), and that the built images actually
+contain `tailscaled`. Then confirm the node is live:
+
+```sh
 tailscale status | grep -- -initrd    # from any other node on your tailnet
 ```
 
