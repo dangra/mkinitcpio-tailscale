@@ -351,6 +351,70 @@ assert_guard 'G: tailscale package absent' 'tailscale not installed'
 unshim_pacman
 endgroup
 
+# --- the libalpm hook script -----------------------------------------------
+# Not an image build: what matters is the guard logic -- rebuild exactly when
+# the hook is enabled and configured. mkinitcpio is shimmed through PATH (the
+# script, unlike mkinitcpio, does not reset it) so no real rebuild happens.
+group 'variant H: libalpm hook script rebuilds only when it should'
+
+if ((USE_INSTALLED)); then
+	ALPM_SCRIPT=/usr/share/libalpm/scripts/mkinitcpio-tailscale
+else
+	ALPM_SCRIPT="$REPO_ROOT/libalpm-script-tailscale"
+fi
+[[ -f $ALPM_SCRIPT ]] || die "libalpm script not found: $ALPM_SCRIPT"
+
+ALPM_SHIM="$WORK/alpm-shim"
+ALPM_CALLS="$WORK/alpm-mkinitcpio.calls"
+install -d "$ALPM_SHIM"
+cat >"$ALPM_SHIM/mkinitcpio" <<-EOF
+	#!/usr/bin/env bash
+	printf '%s\n' "\$*" >>"$ALPM_CALLS"
+EOF
+chmod 755 "$ALPM_SHIM/mkinitcpio"
+run_alpm() { PATH="$ALPM_SHIM:$PATH" bash "$ALPM_SCRIPT"; }
+
+# This group owns /etc/mkinitcpio.conf for its duration; put back whatever the
+# container had. $TS_SETUPDIR needs no such care -- fixtures_cleanup covers it.
+cp -a /etc/mkinitcpio.conf "$WORK/mkinitcpio.conf.orig" 2>/dev/null || true
+restore_conf() {
+	rm -rf /etc/mkinitcpio.conf.d
+	[[ -f $WORK/mkinitcpio.conf.orig ]] &&
+		cp -a "$WORK/mkinitcpio.conf.orig" /etc/mkinitcpio.conf
+}
+
+: >"$ALPM_CALLS"
+printf 'HOOKS=(base udev block filesystems)\n' >/etc/mkinitcpio.conf
+rm -rf /etc/mkinitcpio.conf.d
+check 'H: exits 0 when the hook is not enabled' run_alpm
+check_fails 'H: no rebuild when the hook is not enabled' test -s "$ALPM_CALLS"
+
+printf 'HOOKS=(base udev tailscale filesystems)\n' >/etc/mkinitcpio.conf
+rm -rf "$TS_SETUPDIR"
+if run_alpm >"$WORK/alpm-out.log" 2>&1; then
+	pass 'H: exits 0 when enabled but not configured'
+else
+	fail 'H: exits 0 when enabled but not configured' "$(cat "$WORK/alpm-out.log")"
+fi
+check_fails 'H: no rebuild when not configured' test -s "$ALPM_CALLS"
+check 'H: tells the user what to run instead' \
+	grep -q 'setup-initcpio-tailscale' "$WORK/alpm-out.log"
+
+fixtures_write
+check 'H: exits 0 when enabled and configured' run_alpm
+check 'H: rebuilds every preset' grep -qx -- '-P' "$ALPM_CALLS"
+
+# HOOKS= may live in a conf.d drop-in rather than the main file.
+: >"$ALPM_CALLS"
+printf 'HOOKS=(base udev block filesystems)\n' >/etc/mkinitcpio.conf
+install -d /etc/mkinitcpio.conf.d
+printf 'HOOKS=(base udev tailscale filesystems)\n' >/etc/mkinitcpio.conf.d/tailscale.conf
+check 'H: honours HOOKS= from a conf.d drop-in' run_alpm
+check 'H: rebuilds for the drop-in too' grep -qx -- '-P' "$ALPM_CALLS"
+
+restore_conf
+endgroup
+
 if ((TESTS_FAILED)) && [[ -n ${ARTIFACT_DIR:-} ]]; then
 	install -d "$ARTIFACT_DIR"
 	cp "$WORK"/build.*.log "$ARTIFACT_DIR/" 2>/dev/null || true

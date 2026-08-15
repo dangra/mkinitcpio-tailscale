@@ -72,6 +72,8 @@ if diff -u - "$WORK/staged.files" >"$WORK/staged.diff" <<-'EOF'; then
 	README.md
 	initcpio-hooks-tailscale
 	initcpio-install-tailscale
+	libalpm-hook-tailscale
+	libalpm-script-tailscale
 	setup-initcpio-tailscale
 EOF
 	pass 'staged tree contains exactly the release file set'
@@ -126,6 +128,8 @@ done <<-'EOF'
 	-rw-r--r-- usr/lib/initcpio/hooks/tailscale
 	-rw-r--r-- usr/lib/initcpio/install/tailscale
 	-rwxr-xr-x usr/bin/setup-initcpio-tailscale
+	-rw-r--r-- usr/share/libalpm/hooks/mkinitcpio-tailscale.hook
+	-rwxr-xr-x usr/share/libalpm/scripts/mkinitcpio-tailscale
 EOF
 
 # Guards against a stray file sneaking into the package.
@@ -133,6 +137,8 @@ if diff -u - "$WORK/payload.files" >"$WORK/payload.diff" <<-'EOF'; then
 	usr/bin/setup-initcpio-tailscale
 	usr/lib/initcpio/hooks/tailscale
 	usr/lib/initcpio/install/tailscale
+	usr/share/libalpm/hooks/mkinitcpio-tailscale.hook
+	usr/share/libalpm/scripts/mkinitcpio-tailscale
 EOF
 	pass 'package contains exactly the expected files'
 else

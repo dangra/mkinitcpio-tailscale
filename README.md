@@ -130,6 +130,12 @@ lsinitcpio -l /boot/initramfs-linux.img | grep tailscale
 tailscale status | grep -- -initrd    # from any other node on your tailnet
 ```
 
+From here on the image looks after itself: the package ships a pacman hook
+that reruns `mkinitcpio -P` whenever the `tailscale` package is upgraded, since
+the image carries its own copy of `tailscaled` that would otherwise stay at
+the old version until the next kernel update. The hook does nothing on
+machines where `tailscale` is not in `HOOKS=`.
+
 ### Give yourself more than 90 seconds
 
 On a systemd-based initramfs, whatever device `root=` names is a systemd device

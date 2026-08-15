@@ -22,8 +22,12 @@ license=("GPL-2.0-or-later")
 depends=("mkinitcpio")
 source=("initcpio-hooks-tailscale"
   "initcpio-install-tailscale"
-  "setup-initcpio-tailscale")
+  "setup-initcpio-tailscale"
+  "libalpm-hook-tailscale"
+  "libalpm-script-tailscale")
 sha256sums=('SKIP'
+            'SKIP'
+            'SKIP'
             'SKIP'
             'SKIP')
 
@@ -31,4 +35,6 @@ package() {
   install -m 644 -D "${srcdir}/initcpio-hooks-tailscale" "${pkgdir}/usr/lib/initcpio/hooks/tailscale"
   install -m 644 -D "${srcdir}/initcpio-install-tailscale" "${pkgdir}/usr/lib/initcpio/install/tailscale"
   install -m 755 -D "${srcdir}/setup-initcpio-tailscale" "${pkgdir}/usr/bin/setup-initcpio-tailscale"
+  install -m 644 -D "${srcdir}/libalpm-hook-tailscale" "${pkgdir}/usr/share/libalpm/hooks/mkinitcpio-tailscale.hook"
+  install -m 755 -D "${srcdir}/libalpm-script-tailscale" "${pkgdir}/usr/share/libalpm/scripts/mkinitcpio-tailscale"
 }
