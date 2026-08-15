@@ -16,8 +16,9 @@ on:
     # headscale is pinned -- so this weekly run is the dependency canary: a
     # failure with no commit behind it means an update of tailscale,
     # mkinitcpio, linux or openssh broke the hook, before users have to find
-    # out. GitHub emails the failure to whoever last edited this cron line,
-    # and disables the schedule after ~60 days without repository activity.
+    # out. A failure opens (or updates) a GitHub issue via the canary-issue
+    # job below. GitHub disables the schedule after ~60 days without
+    # repository activity.
     - cron: '47 5 * * 1'
 
 permissions:
@@ -299,3 +300,49 @@ jobs:
             --notes "Published to the AUR as \`mkinitcpio-tailscale ${pkgver}-${pkgrel}\` on ${today}." \
             --generate-notes \
             stage/*.pkg.tar.zst
+
+  # When the weekly canary run fails, file the failure where it will be seen.
+  # Scheduled-run failure emails go only to whoever last touched the cron line
+  # and are easy to miss; an issue is visible to anyone watching the repo and
+  # holds the investigation. One issue per breakage, not per week: a rerun
+  # while it is still open comments on it instead of opening another.
+  canary-issue:
+    name: canary-issue
+    if: github.event_name == 'schedule' && failure()
+    needs: [lint, package, initramfs, boot, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    timeout-minutes: 5
+    steps:
+      - name: Open or update the canary issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title='The weekly dependency canary is failing'
+          existing=$(gh issue list --state open --json title,number \
+            --jq ".[] | select(.title == \"$title\") | .number" | head -1)
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "Still failing: $RUN_URL"
+            echo "commented on existing issue #$existing"
+            exit 0
+          fi
+          gh issue create --title "$title" --body "$(cat <<EOF
+          The scheduled CI run failed with no commit behind it, which means an
+          update of a dependency -- tailscale, mkinitcpio, linux or openssh --
+          broke the hook. Users installing or rebuilding today are likely
+          affected.
+
+          Failed run: $RUN_URL
+
+          To reproduce locally against current packages:
+
+              make test-all
+
+          This issue was opened automatically by the canary-issue job in
+          .github/workflows/ci.yml; further weekly failures will be added as
+          comments while it stays open.
+          EOF
+          )"
