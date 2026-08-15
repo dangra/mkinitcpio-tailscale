@@ -13,13 +13,14 @@ on:
   workflow_dispatch:
   schedule:
     # The suite installs whatever Arch ships on the day it runs -- nothing but
-    # headscale is pinned -- so this weekly run is the dependency canary: a
-    # failure with no commit behind it means an update of tailscale,
-    # mkinitcpio, linux or openssh broke the hook, before users have to find
-    # out. A failure opens (or updates) a GitHub issue via the canary-issue
-    # job below, and the keepalive job stops GitHub's 60-day inactivity rule
-    # from switching the schedule off.
-    - cron: '47 5 * * 1'
+    # headscale is pinned -- so this daily run is the dependency canary: a
+    # failure with no commit behind it means a dependency update broke the
+    # hook, before users have to find out. The gate job keeps the daily
+    # cadence cheap by skipping the suite when no dependency version moved
+    # since the last tested set; a failure opens (or updates) a GitHub issue
+    # via the canary-issue job, and the keepalive job stops GitHub's 60-day
+    # inactivity rule from switching the schedule off.
+    - cron: '47 5 * * *'
 
 permissions:
   contents: read
@@ -29,8 +30,58 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Decides whether a scheduled run has anything to test. The canary exists to
+  # catch dependency updates, so when none of the packages the suite exercises
+  # moved since the set recorded by the record job, the day's run stops here
+  # at a few seconds' cost. Everything that is not a schedule -- pushes, pull
+  # requests, tags, manual dispatch -- passes through unconditionally, which
+  # also makes workflow_dispatch the retry lever when a gated day needs a
+  # second look. Fail-open by design: a missing baseline, an unreachable
+  # archlinux.org, or a package the query cannot resolve all count as changed.
+  gate:
+    name: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      changed: ${{ steps.cmp.outputs.changed }}
+      versions: ${{ steps.cmp.outputs.versions }}
+    steps:
+      - name: Compare dependency versions with the last tested set
+        id: cmp
+        env:
+          LAST: ${{ vars.CANARY_PKGS }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != schedule ]; then
+            echo 'changed=true' >>"$GITHUB_OUTPUT"
+            echo 'versions=' >>"$GITHUB_OUTPUT"
+            echo "not a scheduled run; testing unconditionally"
+            exit 0
+          fi
+          # The packages that end up in or build the image, plus the ssh
+          # tooling. Test-only infrastructure (qemu, headscale, jq) is
+          # deliberately absent: an update there cannot break users.
+          pkgs='tailscale mkinitcpio linux systemd busybox openssh'
+          versions=$(for p in $pkgs; do
+            curl -fsS --max-time 15 "https://archlinux.org/packages/search/json/?name=$p" |
+              jq -r --arg p "$p" '.results[0] | "\($p)=\(.pkgver)-\(.pkgrel)"' ||
+              echo "$p=unknown"
+          done | LC_ALL=C sort | paste -sd' ')
+          echo "versions=$versions" >>"$GITHUB_OUTPUT"
+          if [ -n "$LAST" ] && [ "$versions" = "$LAST" ] && ! grep -q unknown <<<"$versions"; then
+            echo "no dependency moved since the last tested set:"
+            echo "  $versions"
+            echo 'changed=false' >>"$GITHUB_OUTPUT"
+          else
+            echo "dependencies changed, or no clean baseline:"
+            echo "  last:    ${LAST:-<none>}"
+            echo "  current: $versions"
+            echo 'changed=true' >>"$GITHUB_OUTPUT"
+          fi
+
   lint:
     name: lint
+    needs: [gate]
+    if: needs.gate.outputs.changed == 'true'
     runs-on: ubuntu-latest
     container: archlinux:base-devel
     timeout-minutes: 10
@@ -49,6 +100,8 @@ jobs:
 
   package:
     name: package
+    needs: [gate]
+    if: needs.gate.outputs.changed == 'true'
     runs-on: ubuntu-latest
     container: archlinux:base-devel
     timeout-minutes: 20
@@ -82,6 +135,8 @@ jobs:
 
   initramfs:
     name: initramfs
+    needs: [gate]
+    if: needs.gate.outputs.changed == 'true'
     runs-on: ubuntu-latest
     container: archlinux:base-devel
     timeout-minutes: 30
@@ -120,6 +175,8 @@ jobs:
 
   boot:
     name: boot
+    needs: [gate]
+    if: needs.gate.outputs.changed == 'true'
     runs-on: ubuntu-latest
     # Two boots -- systemd and busybox -- and a runner without KVM falls back to
     # TCG, where each one can take the full BOOT_TIMEOUT.
@@ -364,3 +421,37 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/ci.yml/enable"
+
+  # The other half of the gate: remember which dependency set was tested, so
+  # tomorrow's gate has something to compare against. Recorded even when the
+  # suite fails -- the failure is already filed by canary-issue, and re-running
+  # the same versions every day would only re-fail; workflow_dispatch bypasses
+  # the gate when a retry is wanted. Failures here only warn: a stale baseline
+  # degrades to testing more often, never less.
+  record:
+    name: record
+    if: github.event_name == 'schedule' && needs.gate.outputs.changed == 'true' && !cancelled()
+    needs: [gate, lint, package, initramfs, boot]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    timeout-minutes: 5
+    steps:
+      - name: Record the tested versions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          VERSIONS: ${{ needs.gate.outputs.versions }}
+        run: |
+          if [ -z "$VERSIONS" ]; then
+            echo '::warning::gate produced no version set; nothing recorded'
+            exit 0
+          fi
+          if ! gh api -X PATCH "repos/$GH_REPO/actions/variables/CANARY_PKGS" \
+              -f name=CANARY_PKGS -f value="$VERSIONS" 2>/dev/null &&
+             ! gh api -X POST "repos/$GH_REPO/actions/variables" \
+              -f name=CANARY_PKGS -f value="$VERSIONS" 2>/dev/null; then
+            echo '::warning::could not update CANARY_PKGS; the next scheduled run will test again'
+            exit 0
+          fi
+          echo "recorded: $VERSIONS"
