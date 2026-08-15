@@ -19,10 +19,9 @@ pkgdesc="mkinitcpio hook to launch Tailscale on systemd or busybox based initram
 arch=("any")
 url="https://github.com/dangra/mkinitcpio-tailscale"
 license=("GPL-2.0-or-later")
-# tailscale and iptables are needed at image build time: the install hook
-# refuses to build without the tailscale package, and copies the iptables
-# userland in -- which tailscale itself does not depend on.
-depends=("mkinitcpio" "tailscale" "iptables")
+# tailscale is needed at image build time: the install hook refuses to build
+# without the package installed.
+depends=("mkinitcpio" "tailscale")
 optdepends=("openssh: host key generation for the default Tailscale SSH setup")
 source=("initcpio-hooks-tailscale"
   "initcpio-install-tailscale"

@@ -32,11 +32,12 @@ build() {
 		done
 	fi
 
-	# tailscale requirements
+	# tailscale requirements. No netfilter userland or modules: the node is
+	# registered with --netfilter-mode=off, since for the minutes the image
+	# runs -- one interface, no subnet routing, no exit node -- tailscaled has
+	# nothing to program into a firewall.
 	add_module tun
-	add_full_dir /usr/lib/xtables
-	add_all_modules netfilter
-	map add_binary getent iptables ip6tables tailscale tailscaled
+	map add_binary getent tailscale tailscaled
 
 	if [[ $(type -t add_systemd_unit) == function ]]; then
 		add_systemd_unit tailscaled.service

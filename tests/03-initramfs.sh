@@ -16,10 +16,8 @@ USE_INSTALLED=0
 need_root
 need_cmd mkinitcpio lsinitcpio depmod ssh-keygen
 
-# The install hook bails out unless the tailscale package is present, and
-# add_binary/add_full_dir need the iptables userland -- which tailscale does not
-# depend on, so it has to be installed in its own right.
-need_pkg tailscale iptables
+# The install hook bails out unless the tailscale package is present.
+need_pkg tailscale
 
 WORK=$(mktemp -d)
 BUILD_N=0
@@ -140,17 +138,19 @@ assert_common() {
 	check "$label: tailscaled binary" in_list usr/bin/tailscaled
 	check "$label: tailscale binary" in_list usr/bin/tailscale
 	check "$label: getent" in_list usr/bin/getent
-	check "$label: iptables" in_list usr/bin/iptables
-	check "$label: ip6tables" in_list usr/bin/ip6tables
-	img_has_glob "$ROOT" 'usr/lib/xtables/lib*.so' "$label: xtables plugins present"
 	img_has_glob "$ROOT" "usr/lib/modules/$KVER/kernel/drivers/net/tun.ko*" "$label: tun module present"
 
+	# The node is registered with --netfilter-mode=off, so none of the
+	# netfilter userland or modules belong in the image; their absence is what
+	# keeps it small.
+	check_fails "$label: no iptables in the image" in_list usr/bin/iptables
+	check_fails "$label: no xtables plugins in the image" test -d "$ROOT/usr/lib/xtables"
 	local nf
 	nf=$(grep -cE 'kernel/net/netfilter/.*\.ko' "$LIST")
-	if ((nf > 20)); then
-		pass "$label: netfilter modules present ($nf)"
+	if ((nf == 0)); then
+		pass "$label: no netfilter modules in the image"
 	else
-		fail "$label: netfilter modules present" "only $nf found, expected >20"
+		fail "$label: no netfilter modules in the image" "$nf present"
 	fi
 
 	# The configuration copied off the host must arrive intact at the paths the

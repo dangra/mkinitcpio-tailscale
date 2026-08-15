@@ -87,10 +87,8 @@ jobs:
           ln -sf /dev/null /etc/pacman.d/hooks/90-mkinitcpio-install.hook
           # mkinitcpio is named explicitly because linux depends on the virtual
           # "initramfs" provider and --noconfirm could otherwise pick dracut.
-          # iptables is explicit too: the tailscale package does not depend on
-          # it, but the hook calls add_binary iptables.
           pacman -Syu --noconfirm --needed \
-            git mkinitcpio linux tailscale iptables openssh
+            git mkinitcpio linux tailscale openssh
 
       - uses: actions/checkout@v7
 

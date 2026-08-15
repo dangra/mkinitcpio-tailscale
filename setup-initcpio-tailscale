@@ -28,6 +28,11 @@ Defaults:
                 tinyssh instead. Only one of them can answer port 22 on the
                 tailnet, so don't enable both.
 
+  --netfilter-mode=off
+                The initramfs node routes nothing, so no firewall rules are
+                programmed, and the image can leave out the whole netfilter
+                userland. Pass a different mode to override.
+
 Instead of registering, '${CMD0} --check' verifies an existing setup without
 changing anything: configuration files present, 'tailscale' placed correctly
 in HOOKS=, and the built images actually carrying tailscaled.
@@ -186,6 +191,7 @@ trap "cleanup" EXIT
 TS_SSH=yes
 FOUND_HOSTNAME_IN_ARGS=no
 FOUND_SSH_IN_ARGS=no
+FOUND_NETFILTER_IN_ARGS=no
 TS_ARGS=()
 WANT_HOSTNAME=no
 
@@ -233,6 +239,9 @@ for arg in "$@"; do
     *) TS_SSH=no ;;
     esac
     ;;
+  netfilter-mode | netfilter-mode=*)
+    FOUND_NETFILTER_IN_ARGS=yes
+    ;;
   esac
   TS_ARGS+=("$arg")
 done
@@ -240,7 +249,14 @@ done
 
 # Defaults are prepended, so an argument the user did pass always has the last
 # word with the flag parser on the other end.
+#
+# netfilter-mode is a preference: it registers into the state file and is what
+# tailscaled applies when the image later loads that state. Off by default
+# because the initramfs node routes nothing and runs for minutes, and it is
+# what lets the install hook leave the whole netfilter userland out of the
+# image.
 set -- "${TS_ARGS[@]}"
+[[ $FOUND_NETFILTER_IN_ARGS == yes ]] || set -- --netfilter-mode=off "$@"
 [[ $FOUND_SSH_IN_ARGS == yes ]] || set -- --ssh "$@"
 [[ $FOUND_HOSTNAME_IN_ARGS == yes ]] || set -- --hostname="$TS_HOSTNAME" "$@"
 

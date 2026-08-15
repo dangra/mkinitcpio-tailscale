@@ -106,7 +106,7 @@ fi
 
 need_root
 need_cmd mkinitcpio qemu-system-x86_64 curl jq depmod ssh ssh-keygen
-need_pkg tailscale iptables
+need_pkg tailscale
 
 WORK=$(mktemp -d)
 QEMU_PID=''
