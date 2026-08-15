@@ -14,17 +14,21 @@
 # coverage, via the non-interactive --authkey path.
 #
 # One boot per branch of the install hook, since the two produce genuinely
-# different images and the runtime hook only runs in the second:
+# different images and the runtime hook only runs in the second -- plus one for
+# the --no-ssh path:
 #
-#   systemd   HOOKS=(base systemd ... tailscale)   tailscaled.service
-#   busybox   HOOKS=(base udev ... tailscale)      initcpio-hooks-tailscale
+#   systemd    HOOKS=(base systemd ... tailscale)   tailscaled.service
+#   busybox    HOOKS=(base udev ... tailscale)      initcpio-hooks-tailscale
+#   dropbear   busybox again, registered --no-ssh, with a dropbear standing in
+#              for the user's own early ssh daemon
 #
-# Both register with Tailscale SSH, which is what the setup helper does when
-# left alone: that state is a superset of the plain one, so two boots cover both
-# branches and the ssh path. The --no-ssh side is asserted on the configuration
-# the helper writes, without a boot of its own. The images also carry the two
-# test-only hooks under tests/initcpio -- testnet for an address on QEMU's
-# user-mode network, testuser for the login the ssh assertions use.
+# The first two register with Tailscale SSH, which is what the setup helper
+# does when left alone. The dropbear scenario is what proves the --no-ssh
+# promise: tailscaled runs on userspace networking, so inbound tailnet TCP
+# only reaches another daemon through its loopback proxy, and that path is
+# worthless untested. The images also carry test-only hooks from
+# tests/initcpio -- testnet for an address on QEMU's user-mode network,
+# testuser for the login the ssh assertions use, testdropbear for the daemon.
 #
 # This is the most environment-sensitive script in the suite; every external
 # moving part is parameterised below.
@@ -67,17 +71,27 @@ SSH_USER=${SSH_USER:-citest}
 declare -A SC_HOOKS=(
 	[systemd]='base systemd testnet tailscale testuser'
 	[busybox]='base udev testnet tailscale testuser'
+	[dropbear]='base udev testnet tailscale testuser testdropbear'
 )
-declare -A SC_SUFFIX=([systemd]=sd [busybox]=bb)
+declare -A SC_SUFFIX=([systemd]=sd [busybox]=bb [dropbear]=db)
 declare -A SC_ROOT=(
 	[systemd]=deadbeef-0000-0000-0000-000000000001
 	[busybox]=deadbeef-0000-0000-0000-000000000002
+	[dropbear]=deadbeef-0000-0000-0000-000000000003
+)
+# Extra setup-helper arguments per scenario: the dropbear one registers the
+# way a user bringing their own ssh daemon would.
+declare -A SC_SETUP_ARGS=(
+	[systemd]=''
+	[busybox]=''
+	[dropbear]='--no-ssh'
 )
 # Evidence from inside the guest that the hook ran, per branch: the unit on one
 # side, the runtime hook's own first line on the other.
 declare -A SC_CONSOLE=(
 	[systemd]='Started Tailscale node agent|tailscaled'
 	[busybox]='Starting Tailscale'
+	[dropbear]='Starting Tailscale'
 )
 
 # mkinitcpio's init drops into an interactive rescue shell once it gives up on
@@ -88,6 +102,7 @@ declare -A SC_CONSOLE=(
 declare -A SC_APPEND=(
 	[systemd]=''
 	[busybox]="rootdelay=$((BOOT_TIMEOUT + 120))"
+	[dropbear]="rootdelay=$((BOOT_TIMEOUT + 120))"
 )
 
 USE_INSTALLED=0
@@ -95,17 +110,24 @@ SCENARIOS=()
 for arg in "$@"; do
 	case $arg in
 	--installed) USE_INSTALLED=1 ;;
-	systemd | busybox) SCENARIOS+=("$arg") ;;
-	*) die "unknown argument: $arg (expected --installed, systemd or busybox)" ;;
+	systemd | busybox | dropbear) SCENARIOS+=("$arg") ;;
+	*) die "unknown argument: $arg (expected --installed, systemd, busybox or dropbear)" ;;
 	esac
 done
 if ((${#SCENARIOS[@]} == 0)); then
 	# shellcheck disable=SC2206 # a space separated override is the point
-	SCENARIOS=(${BOOT_SCENARIOS:-systemd busybox})
+	SCENARIOS=(${BOOT_SCENARIOS:-systemd busybox dropbear})
 fi
+
+has_scenario() {
+	local s
+	for s in "${SCENARIOS[@]}"; do [[ $s == "$1" ]] && return 0; done
+	return 1
+}
 
 need_root
 need_cmd mkinitcpio qemu-system-x86_64 curl jq depmod ssh ssh-keygen
+has_scenario dropbear && need_cmd dropbearkey
 need_pkg tailscale
 
 WORK=$(mktemp -d)
@@ -146,7 +168,9 @@ else
 	install -m644 "$REPO_ROOT/initcpio-hooks-tailscale" "$HOOKDIR/hooks/tailscale"
 	install -m644 "$REPO_ROOT/tests/initcpio/install/testnet" "$HOOKDIR/install/testnet"
 	install -m644 "$REPO_ROOT/tests/initcpio/install/testuser" "$HOOKDIR/install/testuser"
+	install -m644 "$REPO_ROOT/tests/initcpio/install/testdropbear" "$HOOKDIR/install/testdropbear"
 	install -m644 "$REPO_ROOT/tests/initcpio/hooks/testnet" "$HOOKDIR/hooks/testnet"
+	install -m644 "$REPO_ROOT/tests/initcpio/hooks/testdropbear" "$HOOKDIR/hooks/testdropbear"
 	SETUP_HELPER="$REPO_ROOT/setup-initcpio-tailscale"
 	info 'testing the working tree'
 fi
@@ -325,13 +349,15 @@ group 'setup-initcpio-tailscale against headscale'
 for sc in "${SCENARIOS[@]}"; do
 	node="${TS_NODE_NAME}-${SC_SUFFIX[$sc]}"
 
-	# No --ssh: Tailscale SSH is the default, and the host key assertions further
-	# down are what proves the default took effect.
+	# Tailscale SSH is the default and most scenarios rely on it, so the host
+	# key assertions below are what prove the default took effect; the dropbear
+	# scenario registers --no-ssh instead, via SC_SETUP_ARGS.
 	rm -rf "$TS_SETUPDIR"
+	# shellcheck disable=SC2086 # SC_SETUP_ARGS is meant to word-split
 	if "$SETUP_HELPER" \
 		--hostname="$node" \
 		--login-server="$SERVER_URL" \
-		--authkey="$AUTHKEY" >"$WORK/setup.$sc.log" 2>&1; then
+		--authkey="$AUTHKEY" ${SC_SETUP_ARGS[$sc]} >"$WORK/setup.$sc.log" 2>&1; then
 		pass "$sc: setup-initcpio-tailscale registers $node"
 	else
 		fail "$sc: setup-initcpio-tailscale registers $node" "$(cat "$WORK/setup.$sc.log")"
@@ -341,10 +367,16 @@ for sc in "${SCENARIOS[@]}"; do
 
 	check "$sc: setup wrote tailscaled.state" test -s "$TS_SETUPDIR/tailscaled.state"
 	check "$sc: setup wrote default.env" test -s "$TS_SETUPDIR/default.env"
-	check "$sc: setup wrote an ed25519 host key" \
-		test -s "$TS_SETUPDIR/ssh/ssh_host_ed25519_key"
-	check "$sc: the private host key is mode 600" \
-		test "$(stat -c %a "$TS_SETUPDIR/ssh/ssh_host_ed25519_key" 2>/dev/null)" = 600
+	if [[ ${SC_SETUP_ARGS[$sc]} == *--no-ssh* ]]; then
+		check_fails "$sc: --no-ssh left no host keys" test -e "$TS_SETUPDIR/ssh"
+	else
+		check "$sc: setup wrote an ed25519 host key" \
+			test -s "$TS_SETUPDIR/ssh/ssh_host_ed25519_key"
+		check "$sc: the private host key is mode 600" \
+			test "$(stat -c %a "$TS_SETUPDIR/ssh/ssh_host_ed25519_key" 2>/dev/null)" = 600
+		# What the ssh assertions later compare the offered host key against.
+		cp "$TS_SETUPDIR/ssh/ssh_host_ed25519_key.pub" "$WORK/hostkey.$sc.pub"
+	fi
 	check "$sc: the node is registered with headscale" node_known "$node"
 
 	# Keep this scenario's configuration; $TS_SETUPDIR is shared, so it is put
@@ -354,11 +386,26 @@ done
 endgroup
 
 # --- the opt-out ----------------------------------------------------------
-# Deliberately run over the directory the loop above left behind, host keys and
-# all: --no-ssh has to clear them, or every image built afterwards would still
-# carry keys for an ssh server this node no longer runs.
+# Deliberately run over a directory that holds host keys: --no-ssh has to
+# clear them, or every image built afterwards would still carry keys for an
+# ssh server this node no longer runs. The loop above cannot be relied on for
+# that state -- its last scenario may itself be a --no-ssh one -- so restore a
+# Tailscale SSH scenario's state, or fabricate a stale key if none was run.
 group 'setup-initcpio-tailscale --no-ssh'
-check 'the previous run left host keys behind' test -d "$TS_SETUPDIR/ssh"
+restored=''
+for sc in "${SCENARIOS[@]}"; do
+	if [[ -d $WORK/state.$sc/ssh ]]; then
+		rm -rf "$TS_SETUPDIR"
+		cp -a "$WORK/state.$sc" "$TS_SETUPDIR"
+		restored=$sc
+		break
+	fi
+done
+if [[ -z $restored ]]; then
+	install -dm700 "$TS_SETUPDIR/ssh"
+	printf 'stale\n' >"$TS_SETUPDIR/ssh/ssh_host_ed25519_key"
+fi
+check 'host keys are in place before the re-run' test -d "$TS_SETUPDIR/ssh"
 # A re-run must keep the user's default.env tuning; the marker proves the file
 # survived rather than being rewritten with identical content.
 echo '# user tuning marker' >>"$TS_SETUPDIR/default.env"
@@ -423,6 +470,7 @@ SSH_SC=''
 SSH_IP=''
 SSH_KNOWN=''
 SSH_MARKER=''
+SSH_LOGIN=''
 SSH_OPTS=()
 
 # The guest answers ssh, and it is the guest this scenario booted: /proc/cmdline
@@ -430,7 +478,7 @@ SSH_OPTS=()
 ssh_runs_a_command() {
 	local deadline=$((SECONDS + SSH_TIMEOUT)) out rc
 	while :; do
-		out=$(ssh "${SSH_OPTS[@]}" "$SSH_USER@$SSH_IP" cat /proc/cmdline 2>&1)
+		out=$(ssh "${SSH_OPTS[@]}" "$SSH_LOGIN@$SSH_IP" cat /proc/cmdline 2>&1)
 		rc=$?
 		((rc == 0)) && break
 		if ((SECONDS >= deadline)); then
@@ -443,17 +491,20 @@ ssh_runs_a_command() {
 	[[ $out == *"$SSH_MARKER"* ]]
 }
 
-# The whole point of copying host keys into the image: the initrd node is not a
-# stranger to a client that already knows the machine. OpenSSH records the key
-# during the handshake, before authentication, so this stays meaningful even
-# when the session itself is refused.
-hostkey_is_the_one_setup_generated() {
+# The whole point of controlling the host key that goes into the image: the
+# initrd node is not a stranger to a client that already knows the machine.
+# The expected key comes from $WORK/hostkey.<scenario>.pub -- written by the
+# registration loop for Tailscale SSH scenarios, and by the dropbear key
+# generation for the --no-ssh one. OpenSSH records the offered key during the
+# handshake, before authentication, so this stays meaningful even when the
+# session itself is refused.
+hostkey_is_the_expected_one() {
 	local want got
-	want=$(ssh-keygen -lf "$WORK/state.$SSH_SC/ssh/ssh_host_ed25519_key.pub" 2>/dev/null |
+	want=$(ssh-keygen -lf "$WORK/hostkey.$SSH_SC.pub" 2>/dev/null |
 		awk '{print $2}')
 	got=$(ssh-keygen -lf "$SSH_KNOWN" 2>/dev/null |
 		awk '$NF == "(ED25519)" {print $2; exit}')
-	printf 'setup generated %s\nguest offered   %s\n' "$want" "${got:-<nothing recorded>}"
+	printf 'expected %s\nguest offered %s\n' "$want" "${got:-<nothing recorded>}"
 	[[ -n $want && $got == "$want" ]]
 }
 
@@ -589,14 +640,14 @@ assert_ssh() {
 	SSH_IP=$ip
 	SSH_KNOWN="$WORK/known_hosts.$sc"
 	SSH_MARKER=${SC_ROOT[$sc]}
-	# Nothing here may consult the caller's ssh configuration, agent or keys:
-	# Tailscale SSH authorises by tailnet identity, and any local key material
-	# joining in would only muddy what the result means.
+	# Nothing here may consult the caller's ssh configuration, agent or keys.
+	# Tailscale SSH authorises by tailnet identity, so those scenarios shut
+	# pubkey auth off entirely; the dropbear scenario is the opposite -- it
+	# authorises by exactly one key, the throwaway one this run generated.
 	SSH_OPTS=(
 		-n
 		-F /dev/null
 		-o BatchMode=yes
-		-o PubkeyAuthentication=no
 		-o IdentityAgent=none
 		-o StrictHostKeyChecking=accept-new
 		-o UserKnownHostsFile="$SSH_KNOWN"
@@ -604,11 +655,25 @@ assert_ssh() {
 		-o ConnectTimeout=20
 		-o "ProxyCommand=tailscale --socket=$CLIENT_SOCK nc %h %p"
 	)
+	if [[ $sc == dropbear ]]; then
+		# Root, not $SSH_USER: dropbear requires the authorized_keys path to be
+		# owned by the login user, and mkinitcpio squashes image files to uid 0.
+		# See tests/initcpio/install/testdropbear.
+		SSH_LOGIN=root
+		SSH_OPTS+=(
+			-o PubkeyAuthentication=yes
+			-o IdentitiesOnly=yes
+			-i "$WORK/dropbear_client_key"
+		)
+	else
+		SSH_LOGIN=$SSH_USER
+		SSH_OPTS+=(-o PubkeyAuthentication=no)
+	fi
 	info "$sc: reaching $node at $ip over the tailnet"
 
 	check "$sc: ssh runs a command inside the initramfs" ssh_runs_a_command
-	check "$sc: the ssh host key is the one setup generated" \
-		hostkey_is_the_one_setup_generated
+	check "$sc: the ssh host key is the expected one" \
+		hostkey_is_the_expected_one
 }
 
 # --- boot -----------------------------------------------------------------
@@ -632,6 +697,21 @@ cat >"$TESTNET_CONFIG" <<-'EOF'
 	[Network]
 	DHCP=yes
 EOF
+
+# Throwaway key material for the dropbear scenario: a dropbear-format host key
+# the testdropbear hook copies into the image, and an OpenSSH client keypair
+# whose public half becomes the image's authorized_keys. Both exist only for
+# this run; the host key's public half is what the ssh assertions compare the
+# offered key against, same as the Tailscale SSH scenarios.
+if has_scenario dropbear; then
+	dropbearkey -t ed25519 -f "$WORK/dropbear_host_key" >/dev/null 2>&1
+	dropbearkey -y -f "$WORK/dropbear_host_key" 2>/dev/null |
+		grep '^ssh-ed25519' >"$WORK/hostkey.dropbear.pub"
+	[[ -s $WORK/hostkey.dropbear.pub ]] || die 'could not derive the dropbear host public key'
+	ssh-keygen -q -t ed25519 -N '' -f "$WORK/dropbear_client_key"
+	export TESTDROPBEAR_HOSTKEY="$WORK/dropbear_host_key"
+	export TESTDROPBEAR_AUTHKEYS="$WORK/dropbear_client_key.pub"
+fi
 
 for sc in "${SCENARIOS[@]}"; do
 	run_scenario "$sc"

@@ -1,0 +1,28 @@
+#!/usr/bin/ash
+# shellcheck shell=bash
+# Test-only mkinitcpio runtime hook: starts the dropbear laid down by
+# tests/initcpio/install/testdropbear.
+#
+# Runs after the tailscale hook (HOOKS order), which has already mounted
+# devpts -- dropbear needs a pty for the session the test opens. Listening on
+# the wildcard address is the point of the exercise: inbound tailnet TCP
+# reaches this daemon through tailscaled's userspace loopback proxy, never
+# through a network interface.
+#
+# It is scaffolding for the test suite and is not part of the shipped package.
+
+run_hook() {
+	msg "testdropbear: starting dropbear"
+	# Inbound tailnet TCP arrives as a dial to 127.0.0.1 from tailscaled's
+	# loopback proxy, and nothing else in a busybox initramfs brings lo up.
+	ip link set lo up
+	# Foreground with stderr logging, backgrounded by the shell and pinned to
+	# the console: letting dropbear daemonise detaches its stderr, and even -F
+	# loses it once init moves on, so the redirect is what actually gets the
+	# log into the boot test's captured console. The default pid file lives
+	# under /var/run, which a busybox image does not guarantee.
+	mkdir -p /var/run
+	dropbear -F -E -r /etc/dropbear/dropbear_ed25519_host_key >/dev/console 2>&1 &
+}
+
+# vim: noexpandtab

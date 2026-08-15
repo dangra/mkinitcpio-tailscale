@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Test-only mkinitcpio hook: puts a dropbear ssh server into the image, so
+# tests/04-boot.sh can prove the --no-ssh path -- a node registered without
+# Tailscale SSH stays reachable through tailscaled's userspace networking,
+# which proxies inbound tailnet TCP to the same port on loopback.
+#
+# This stands in for the dropbear hook from mkinitcpio-extras, which lives in
+# the AUR; see tests/initcpio/install/testnet for why the suite does not
+# depend on AUR builds.
+#
+# Key material comes from the environment rather than the host's /etc/dropbear:
+# the boot test generates a throwaway host key and client keypair per run and
+# points these at them.
+#
+#   TESTDROPBEAR_HOSTKEY   dropbear-format ed25519 host key
+#   TESTDROPBEAR_AUTHKEYS  authorized_keys for the login the test uses
+#
+# The login is root, and that is not a convenience: dropbear (2026.94) demands
+# the authorized_keys path be owned by the user logging in, and mkinitcpio
+# squashes every file in the image to uid 0 -- so root is the only login an
+# initramfs can satisfy the check for. Real dropbear-in-initramfs setups
+# (mkinitcpio-extras' root_key) log in as root for the same reason.
+#
+# It is scaffolding for the test suite and is not part of the shipped package.
+
+build() {
+	if [[ $(type -t add_systemd_unit) == function ]]; then
+		warning "testdropbear: this scaffold only supports the busybox branch"
+		return 0
+	fi
+	if [[ ! -r ${TESTDROPBEAR_HOSTKEY:-} || ! -r ${TESTDROPBEAR_AUTHKEYS:-} ]]; then
+		warning "testdropbear: TESTDROPBEAR_HOSTKEY/TESTDROPBEAR_AUTHKEYS not set; leaving dropbear out"
+		return 0
+	fi
+
+	add_binary dropbear
+	add_file "$TESTDROPBEAR_HOSTKEY" /etc/dropbear/dropbear_ed25519_host_key 0600
+	add_dir /root/.ssh 0700
+	add_file "$TESTDROPBEAR_AUTHKEYS" /root/.ssh/authorized_keys 0600
+	add_runscript
+
+	return 0
+}
+
+help() {
+	cat <<-__EOF_HELP__
+		Test-only hook. Adds a dropbear server with test-supplied keys to a busybox
+		image, so the boot test can log in without Tailscale SSH. Not for
+		production use.
+	__EOF_HELP__
+}
+
+# vim: noexpandtab

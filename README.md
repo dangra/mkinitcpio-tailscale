@@ -281,17 +281,17 @@ make test        # lint, packaging, initramfs image contents
 make test-all    # adds the QEMU boot tests against a local headscale
 ```
 
-`make test-all` boots two images against a throwaway headscale (one systemd,
-one busybox, both registered the way the setup helper registers them when left
-alone) and checks each node comes online, then logs in over Tailscale SSH and
-compares the host key it is offered with the one `setup-initcpio-tailscale`
-generated. The `--no-ssh` opt-out is checked there too, on the configuration it
-writes rather than with a boot of its own. A single scenario can be run on its
-own:
+`make test-all` boots three images against a throwaway headscale: a systemd
+and a busybox one registered the way the setup helper registers them when left
+alone, checked by logging in over Tailscale SSH and comparing the host key
+offered with the one `setup-initcpio-tailscale` generated; and a busybox one
+registered `--no-ssh` with a dropbear standing in for the user's own early ssh
+daemon, which proves that path end to end — inbound tailnet TCP reaching a
+daemon next to tailscaled. A single scenario can be run on its own:
 
 ```sh
-./tests/container.sh 04     # both, the way CI runs them
-BOOT_SCENARIOS=busybox ./tests/container.sh 04
+./tests/container.sh 04     # all three, the way CI runs them
+BOOT_SCENARIOS=dropbear ./tests/container.sh 04
 ```
 
 ### Releasing
