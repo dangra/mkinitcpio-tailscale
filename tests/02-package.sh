@@ -89,8 +89,9 @@ check_fails 'namcap reports no errors for PKGBUILD' grep -q ' E: ' "$WORK/namcap
 endgroup
 
 group 'makepkg build'
-# --nodeps: the sole dependency is mkinitcpio and building does not need it
-# installed, which keeps this stage free of sudo/pacman.
+# --nodeps: the dependencies (mkinitcpio, tailscale, iptables) matter at image
+# build time, not for packaging, so skipping them keeps this stage free of
+# sudo/pacman.
 if (cd "$STAGE" && makepkg --noconfirm --nodeps --force >"$WORK/makepkg.log" 2>&1); then
 	pass 'makepkg builds the staged package'
 else
