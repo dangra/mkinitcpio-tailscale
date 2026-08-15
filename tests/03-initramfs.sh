@@ -125,9 +125,11 @@ snapshot() {
 
 in_list() { grep -qxF -- "$1" "$LIST"; }
 
-# Shared expectations for every successful build.
+# Shared expectations for every successful build. The optional second
+# argument flips the tun expectation: 'tun' for a TUN="..." build, which must
+# carry the module, anything else for the default, which must not.
 assert_common() {
-	local label=$1
+	local label=$1 tun=${2:-}
 
 	# A runtime hook whose shebang names an interpreter the image does not ship
 	# makes mkinitcpio warn on every rebuild the user runs. Cheap to keep quiet,
@@ -138,12 +140,17 @@ assert_common() {
 	check "$label: tailscaled binary" in_list usr/bin/tailscaled
 	check "$label: tailscale binary" in_list usr/bin/tailscale
 	check "$label: getent" in_list usr/bin/getent
-	# tailscaled runs with userspace networking, so not even the tun module
-	# belongs in the image, and the netfilter userland and modules went the
-	# same way when the node started registering with --netfilter-mode=off;
-	# their absence is what keeps the image small.
-	check_fails "$label: no tun module in the image" \
-		bash -c "compgen -G '$ROOT/usr/lib/modules/$KVER/kernel/drivers/net/tun.ko*'"
+	# tailscaled runs with userspace networking by default, so not even the
+	# tun module belongs in the image -- unless default.env opts into a kernel
+	# device, and then it must be there. The netfilter userland and modules
+	# are always absent since the node registers with --netfilter-mode=off.
+	if [[ $tun == tun ]]; then
+		img_has_glob "$ROOT" "usr/lib/modules/$KVER/kernel/drivers/net/tun.ko*" \
+			"$label: tun module present for the kernel TUN opt-in"
+	else
+		check_fails "$label: no tun module in the image" \
+			bash -c "compgen -G '$ROOT/usr/lib/modules/$KVER/kernel/drivers/net/tun.ko*'"
+	fi
 	check_fails "$label: no iptables in the image" in_list usr/bin/iptables
 	check_fails "$label: no xtables plugins in the image" test -d "$ROOT/usr/lib/xtables"
 	local nf
@@ -180,6 +187,8 @@ if build_image 'base systemd tailscale'; then
 	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/override.conf '^DefaultDependencies=no$'
 	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/override.conf '^After=network-online\.target$'
 	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/override.conf '^Wants=network-online\.target$'
+	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/override.conf \
+		'^ExecStart=.* --tun=userspace-networking '
 	# An absolute symlink target, so compare the link text -- following it would
 	# resolve against the host and pass even with the unit missing.
 	img_symlink "$ROOT" etc/systemd/system/sysinit.target.wants/tailscaled.service \
@@ -300,6 +309,31 @@ if build_image 'base udev modconf kms keyboard keymap consolefont block filesyst
 	img_grep "$ROOT" etc/passwd '^root:x:0:0:root:/root:/bin/sh$'
 else
 	fail 'D: mkinitcpio builds with the stock default hooks' "$(tail -30 "$LOG")"
+fi
+endgroup
+
+# --- variant D2: the kernel TUN opt-in ------------------------------------
+# TUN= in default.env (setup-initcpio-tailscale --tun) must put the module
+# back and reach the daemon's command line on both branches.
+group 'variant D2: kernel TUN opt-in'
+fixtures_write
+printf 'TUN="tailscale0"\n' >>"$FIXTURE_SRC/default.env"
+printf 'TUN="tailscale0"\n' >>"$TS_SETUPDIR/default.env"
+if build_image 'base systemd tailscale'; then
+	pass 'D2: systemd build with TUN=tailscale0'
+	snapshot
+	assert_common D2 tun
+	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/override.conf \
+		'^ExecStart=.* --tun=tailscale0 '
+else
+	fail 'D2: systemd build with TUN=tailscale0' "$(tail -30 "$LOG")"
+fi
+if build_image 'base udev tailscale'; then
+	pass 'D2: busybox build with TUN=tailscale0'
+	snapshot
+	assert_common D2-bb tun
+else
+	fail 'D2: busybox build with TUN=tailscale0' "$(tail -30 "$LOG")"
 fi
 endgroup
 

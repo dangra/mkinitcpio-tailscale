@@ -21,6 +21,9 @@
 #   busybox    HOOKS=(base udev ... tailscale)      initcpio-hooks-tailscale
 #   dropbear   busybox again, registered --no-ssh, with a dropbear standing in
 #              for the user's own early ssh daemon
+#   kerneltun  busybox again, registered --tun: the kernel TUN opt-in, which
+#              must put the tun module back in the image and still serve a
+#              Tailscale SSH session over the tailscale0 device
 #
 # The first two register with Tailscale SSH, which is what the setup helper
 # does when left alone. The dropbear scenario is what proves the --no-ssh
@@ -35,7 +38,8 @@
 #
 #   --installed         test /usr/lib/initcpio/... and /usr/bin/setup-initcpio-tailscale
 #                       from the built package instead of the working tree
-#   systemd | busybox   boot only the named scenarios (or set BOOT_SCENARIOS)
+#   systemd | busybox | dropbear | kerneltun
+#                       boot only the named scenarios (or set BOOT_SCENARIOS)
 # shellcheck source-path=SCRIPTDIR
 set -uo pipefail
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
@@ -72,12 +76,14 @@ declare -A SC_HOOKS=(
 	[systemd]='base systemd testnet tailscale testuser'
 	[busybox]='base udev testnet tailscale testuser'
 	[dropbear]='base udev testnet tailscale testuser testdropbear'
+	[kerneltun]='base udev testnet tailscale testuser'
 )
-declare -A SC_SUFFIX=([systemd]=sd [busybox]=bb [dropbear]=db)
+declare -A SC_SUFFIX=([systemd]=sd [busybox]=bb [dropbear]=db [kerneltun]=kt)
 declare -A SC_ROOT=(
 	[systemd]=deadbeef-0000-0000-0000-000000000001
 	[busybox]=deadbeef-0000-0000-0000-000000000002
 	[dropbear]=deadbeef-0000-0000-0000-000000000003
+	[kerneltun]=deadbeef-0000-0000-0000-000000000004
 )
 # Extra setup-helper arguments per scenario: the dropbear one registers the
 # way a user bringing their own ssh daemon would.
@@ -85,6 +91,7 @@ declare -A SC_SETUP_ARGS=(
 	[systemd]=''
 	[busybox]=''
 	[dropbear]='--no-ssh'
+	[kerneltun]='--tun'
 )
 # Evidence from inside the guest that the hook ran, per branch: the unit on one
 # side, the runtime hook's own first line on the other.
@@ -92,6 +99,7 @@ declare -A SC_CONSOLE=(
 	[systemd]='Started Tailscale node agent|tailscaled'
 	[busybox]='Starting Tailscale'
 	[dropbear]='Starting Tailscale'
+	[kerneltun]='Starting Tailscale'
 )
 
 # mkinitcpio's init drops into an interactive rescue shell once it gives up on
@@ -103,6 +111,7 @@ declare -A SC_APPEND=(
 	[systemd]=''
 	[busybox]="rootdelay=$((BOOT_TIMEOUT + 120))"
 	[dropbear]="rootdelay=$((BOOT_TIMEOUT + 120))"
+	[kerneltun]="rootdelay=$((BOOT_TIMEOUT + 120))"
 )
 
 USE_INSTALLED=0
@@ -110,13 +119,13 @@ SCENARIOS=()
 for arg in "$@"; do
 	case $arg in
 	--installed) USE_INSTALLED=1 ;;
-	systemd | busybox | dropbear) SCENARIOS+=("$arg") ;;
-	*) die "unknown argument: $arg (expected --installed, systemd, busybox or dropbear)" ;;
+	systemd | busybox | dropbear | kerneltun) SCENARIOS+=("$arg") ;;
+	*) die "unknown argument: $arg (expected --installed, systemd, busybox, dropbear or kerneltun)" ;;
 	esac
 done
 if ((${#SCENARIOS[@]} == 0)); then
 	# shellcheck disable=SC2206 # a space separated override is the point
-	SCENARIOS=(${BOOT_SCENARIOS:-systemd busybox dropbear})
+	SCENARIOS=(${BOOT_SCENARIOS:-systemd busybox dropbear kerneltun})
 fi
 
 has_scenario() {
@@ -377,6 +386,10 @@ for sc in "${SCENARIOS[@]}"; do
 		# What the ssh assertions later compare the offered host key against.
 		cp "$TS_SETUPDIR/ssh/ssh_host_ed25519_key.pub" "$WORK/hostkey.$sc.pub"
 	fi
+	if [[ ${SC_SETUP_ARGS[$sc]} == *--tun* ]]; then
+		check "$sc: default.env carries TUN=tailscale0" \
+			grep -qx 'TUN="tailscale0"' "$TS_SETUPDIR/default.env"
+	fi
 	check "$sc: the node is registered with headscale" node_known "$node"
 
 	# Keep this scenario's configuration; $TS_SETUPDIR is shared, so it is put
@@ -426,6 +439,24 @@ check_fails '--no-ssh leaves no host keys behind' test -e "$TS_SETUPDIR/ssh"
 # registration above with "flag provided but not defined".
 check_fails '--no-ssh never reached tailscale up' \
 	grep -q 'not defined' "$WORK/setup.nossh.log"
+
+# An explicit --tun must update the default.env the run above kept, replacing
+# its TUN= line while leaving the user's own edits alone.
+if "$SETUP_HELPER" \
+	--hostname="${TS_NODE_NAME}-nossh" \
+	--login-server="$SERVER_URL" \
+	--authkey="$AUTHKEY" \
+	--no-ssh --tun >"$WORK/setup.tun.log" 2>&1; then
+	pass '--tun re-registers the node'
+else
+	fail '--tun re-registers the node' "$(cat "$WORK/setup.tun.log")"
+fi
+check '--tun landed in the kept default.env' \
+	grep -qx 'TUN="tailscale0"' "$TS_SETUPDIR/default.env"
+check 'the user tuning survived alongside it' \
+	grep -q 'user tuning marker' "$TS_SETUPDIR/default.env"
+check_fails '--tun never reached tailscale up' \
+	grep -q 'not defined' "$WORK/setup.tun.log"
 endgroup
 
 # --- a client on the tailnet ----------------------------------------------
