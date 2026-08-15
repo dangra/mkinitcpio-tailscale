@@ -30,8 +30,11 @@ Defaults:
 
   --netfilter-mode=off
                 The initramfs node routes nothing, so no firewall rules are
-                programmed, and the image can leave out the whole netfilter
-                userland. Pass a different mode to override.
+                programmed, and the image leaves out the whole netfilter
+                userland. Pass a different mode to override -- and note the
+                initcpio hook no longer copies the netfilter tools into the
+                image, so you must add them through mkinitcpio.conf yourself;
+                see the README.
 
 Instead of registering, '${CMD0} --check' verifies an existing setup without
 changing anything: configuration files present, 'tailscale' placed correctly
