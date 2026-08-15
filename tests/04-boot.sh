@@ -359,6 +359,9 @@ endgroup
 # carry keys for an ssh server this node no longer runs.
 group 'setup-initcpio-tailscale --no-ssh'
 check 'the previous run left host keys behind' test -d "$TS_SETUPDIR/ssh"
+# A re-run must keep the user's default.env tuning; the marker proves the file
+# survived rather than being rewritten with identical content.
+echo '# user tuning marker' >>"$TS_SETUPDIR/default.env"
 if "$SETUP_HELPER" \
 	--hostname="${TS_NODE_NAME}-nossh" \
 	--login-server="$SERVER_URL" \
@@ -369,6 +372,8 @@ else
 	fail '--no-ssh registers the node' "$(cat "$WORK/setup.nossh.log")"
 fi
 check '--no-ssh still wrote tailscaled.state' test -s "$TS_SETUPDIR/tailscaled.state"
+check 'a re-run keeps an edited default.env' \
+	grep -q 'user tuning marker' "$TS_SETUPDIR/default.env"
 check_fails '--no-ssh leaves no host keys behind' test -e "$TS_SETUPDIR/ssh"
 # 'tailscale up' has no --no-ssh flag, so a pass-through would have failed the
 # registration above with "flag provided but not defined".

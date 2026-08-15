@@ -153,7 +153,17 @@ fi
 [[ "$(id -u)" != 0 ]] && xsu=sudo || xsu=""
 $xsu install -o root -g root -m600 -d "${TS_STATEDIR}"
 $xsu install -o root -g root -m644 -t "${TS_STATEDIR}" "${SETUPDIR}/tailscaled.state"
-$xsu tee "${TS_STATEDIR}/default.env" >/dev/null <<EOF
+
+# default.env is the user's to edit -- the next steps below say to -- and
+# re-running this script (a new key, switching --ssh) is no reason to reset
+# their PORT or FLAGS. Only a missing or empty file gets the defaults; empty
+# counts because the install hook refuses to build from an empty one anyway.
+# The test runs through $xsu: the state directory is not traversable by other
+# users, so a plain -s would read as absent whenever sudo is in play.
+if $xsu test -s "${TS_STATEDIR}/default.env"; then
+  info "keeping existing ${TS_STATEDIR}/default.env"
+else
+  $xsu tee "${TS_STATEDIR}/default.env" >/dev/null <<EOF
 # Set the port to listen on for incoming VPN packets.
 # Remote nodes will automatically be informed about the new port number,
 # but you might want to configure this in order to set external firewall
@@ -163,6 +173,7 @@ PORT="41641"
 # Extra flags you might want to pass to tailscaled.
 FLAGS=""
 EOF
+fi
 
 if [[ $TS_SSH == yes ]]; then
   $xsu install -o root -g root -m600 -Dt "${TS_STATEDIR}/ssh" "${SETUPDIR}/etc/ssh/"ssh_host_*_key
