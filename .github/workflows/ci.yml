@@ -17,8 +17,8 @@ on:
     # failure with no commit behind it means an update of tailscale,
     # mkinitcpio, linux or openssh broke the hook, before users have to find
     # out. A failure opens (or updates) a GitHub issue via the canary-issue
-    # job below. GitHub disables the schedule after ~60 days without
-    # repository activity.
+    # job below, and the keepalive job stops GitHub's 60-day inactivity rule
+    # from switching the schedule off.
     - cron: '47 5 * * 1'
 
 permissions:
@@ -346,3 +346,21 @@ jobs:
           comments while it stays open.
           EOF
           )"
+
+  # Scheduled workflows are disabled after 60 days without repository
+  # activity, and scheduled runs themselves do not count as activity. The
+  # enable call below does reset that timer, so each weekly run re-arms the
+  # schedule and the canary keeps running through quiet stretches -- without
+  # the keep-alive commits the alternative would scatter over a branch.
+  keepalive:
+    name: keepalive
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    timeout-minutes: 5
+    steps:
+      - name: Re-arm the schedule
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/ci.yml/enable"
