@@ -15,6 +15,11 @@ on:
 permissions:
   contents: read
 
+# One string, referenced by canary-issue and canary-issue-close alike: the
+# close side finds the issue by exact title, so the two must never drift.
+env:
+  CANARY_ISSUE_TITLE: The dependency canary is failing
+
 concurrency:
   group: ${{ github.workflow }}
 
@@ -108,8 +113,8 @@ jobs:
   # When a canary run fails, file the failure where it will be seen.
   # Scheduled-run failure emails go only to whoever last touched the cron line
   # and are easy to miss; an issue is visible to anyone watching the repo and
-  # holds the investigation. One issue per breakage, not per week: a rerun
-  # while it is still open comments on it instead of opening another.
+  # holds the investigation. One issue per breakage: repeat failures comment
+  # on it, and the close job below retires it when a run passes again.
   canary-issue:
     name: canary-issue
     if: failure()
@@ -125,7 +130,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          title='The weekly dependency canary is failing'
+          title=$CANARY_ISSUE_TITLE
           existing=$(gh issue list --state open --json title,number \
             --jq ".[] | select(.title == \"$title\") | .number" | head -1)
           if [ -n "$existing" ]; then
@@ -146,10 +151,40 @@ jobs:
               make test-all
 
           This issue was opened automatically by the canary-issue job in
-          .github/workflows/canary.yml; further weekly failures will be added as
-          comments while it stays open.
+          .github/workflows/canary.yml; further failures will be added as
+          comments while it stays open; a canary run
+          that passes again closes it.
           EOF
           )"
+
+  # The recovery side of canary-issue: a canary that passes -- the next
+  # dependency bump going green, or a manual dispatch after a fix -- closes
+  # the open issue with the run that proved it, so the issue's lifetime is
+  # exactly the breakage's. A later failure opens a fresh issue rather than
+  # reopening this one, which keeps one investigation per issue.
+  canary-issue-close:
+    name: canary-issue-close
+    if: needs.tests.result == 'success'
+    needs: [gate, tests]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    timeout-minutes: 5
+    steps:
+      - name: Close the canary issue if one is open
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          existing=$(gh issue list --state open --json title,number \
+            --jq ".[] | select(.title == \"$CANARY_ISSUE_TITLE\") | .number" | head -1)
+          if [ -z "$existing" ]; then
+            echo "no open canary issue; nothing to close"
+            exit 0
+          fi
+          gh issue close "$existing" --comment "Passing again: $RUN_URL"
+          echo "closed issue #$existing"
 
   # Scheduled workflows are disabled after 60 days without repository
   # activity, and scheduled runs themselves do not count as activity. The
