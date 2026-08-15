@@ -15,6 +15,12 @@ run_hook() (
   mkdir /dev/pts
   mount -t devpts none /dev/pts
 
+  # Userspace networking delivers inbound tailnet TCP by dialling the same
+  # port on 127.0.0.1. systemd brings lo up as PID 1; nothing in a busybox
+  # initramfs does, and with lo down a dropbear or tinyssh next to tailscaled
+  # is unreachable no matter what it listens on.
+  ip link set lo up
+
   # Launch tailscale agent in the background. Userspace networking rather
   # than a TUN device: see the install hook, which for the same reason no
   # longer puts the tun module in the image.

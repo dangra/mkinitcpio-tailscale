@@ -190,9 +190,9 @@ which also removes any host keys an earlier run left in
 Two things to know when running your own `dropbear` or `tinyssh` alongside.
 Inbound tailnet connections reach it through a proxy that dials the same port
 on `127.0.0.1`, so the daemon must listen on a wildcard or loopback address
-(one bound to a specific interface address will never see a connection), and
-on a busybox image make sure something brings `lo` up, which nothing does by
-default. And log in as root: everything in an initramfs is owned by root, and
+(one bound to a specific interface address will never see a connection); this
+hook brings `lo` up itself, since nothing else in a busybox image would. And
+log in as root: everything in an initramfs is owned by root, and
 `dropbear` refuses an `authorized_keys` it does not consider owned by the user
 logging in, so root is the login that works. That is the same reason the
 retired dropbear hooks used a `root_key`. The boot test exercises exactly this

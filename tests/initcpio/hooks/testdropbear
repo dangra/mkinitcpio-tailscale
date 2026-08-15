@@ -13,9 +13,9 @@
 
 run_hook() {
 	msg "testdropbear: starting dropbear"
-	# Inbound tailnet TCP arrives as a dial to 127.0.0.1 from tailscaled's
-	# loopback proxy, and nothing else in a busybox initramfs brings lo up.
-	ip link set lo up
+	# No `ip link set lo up` here on purpose: the shipped tailscale runtime
+	# hook is responsible for it, and this scenario failing without it is
+	# exactly the coverage that keeps that line from being dropped.
 	# Foreground with stderr logging, backgrounded by the shell and pinned to
 	# the console: letting dropbear daemonise detaches its stderr, and even -F
 	# loses it once init moves on, so the redirect is what actually gets the
