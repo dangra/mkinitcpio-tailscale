@@ -11,6 +11,14 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+  schedule:
+    # The suite installs whatever Arch ships on the day it runs -- nothing but
+    # headscale is pinned -- so this weekly run is the dependency canary: a
+    # failure with no commit behind it means an update of tailscale,
+    # mkinitcpio, linux or openssh broke the hook, before users have to find
+    # out. GitHub emails the failure to whoever last edited this cron line,
+    # and disables the schedule after ~60 days without repository activity.
+    - cron: '47 5 * * 1'
 
 permissions:
   contents: read
