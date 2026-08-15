@@ -24,6 +24,9 @@
 #   kerneltun  busybox again, registered --tun: the kernel TUN opt-in, which
 #              must put the tun module back in the image and still serve a
 #              Tailscale SSH session over the tailscale0 device
+#   dropbeartun  --no-ssh and --tun together: the remedy the docs offer a
+#              user whose own daemon cannot live behind the loopback proxy,
+#              so it has to be more than advice
 #
 # The first two register with Tailscale SSH, which is what the setup helper
 # does when left alone. The dropbear scenario is what proves the --no-ssh
@@ -77,13 +80,15 @@ declare -A SC_HOOKS=(
 	[busybox]='base udev testnet tailscale testuser'
 	[dropbear]='base udev testnet tailscale testuser testdropbear'
 	[kerneltun]='base udev testnet tailscale testuser'
+	[dropbeartun]='base udev testnet tailscale testuser testdropbear'
 )
-declare -A SC_SUFFIX=([systemd]=sd [busybox]=bb [dropbear]=db [kerneltun]=kt)
+declare -A SC_SUFFIX=([systemd]=sd [busybox]=bb [dropbear]=db [kerneltun]=kt [dropbeartun]=dt)
 declare -A SC_ROOT=(
 	[systemd]=deadbeef-0000-0000-0000-000000000001
 	[busybox]=deadbeef-0000-0000-0000-000000000002
 	[dropbear]=deadbeef-0000-0000-0000-000000000003
 	[kerneltun]=deadbeef-0000-0000-0000-000000000004
+	[dropbeartun]=deadbeef-0000-0000-0000-000000000005
 )
 # Extra setup-helper arguments per scenario: the dropbear one registers the
 # way a user bringing their own ssh daemon would.
@@ -92,6 +97,7 @@ declare -A SC_SETUP_ARGS=(
 	[busybox]=''
 	[dropbear]='--no-ssh'
 	[kerneltun]='--tun'
+	[dropbeartun]='--no-ssh --tun'
 )
 # Evidence from inside the guest that the hook ran, per branch: the unit on one
 # side, the runtime hook's own first line on the other.
@@ -100,6 +106,7 @@ declare -A SC_CONSOLE=(
 	[busybox]='Starting Tailscale'
 	[dropbear]='Starting Tailscale'
 	[kerneltun]='Starting Tailscale'
+	[dropbeartun]='Starting Tailscale'
 )
 
 # mkinitcpio's init drops into an interactive rescue shell once it gives up on
@@ -112,6 +119,7 @@ declare -A SC_APPEND=(
 	[busybox]="rootdelay=$((BOOT_TIMEOUT + 120))"
 	[dropbear]="rootdelay=$((BOOT_TIMEOUT + 120))"
 	[kerneltun]="rootdelay=$((BOOT_TIMEOUT + 120))"
+	[dropbeartun]="rootdelay=$((BOOT_TIMEOUT + 120))"
 )
 
 USE_INSTALLED=0
@@ -119,13 +127,13 @@ SCENARIOS=()
 for arg in "$@"; do
 	case $arg in
 	--installed) USE_INSTALLED=1 ;;
-	systemd | busybox | dropbear | kerneltun) SCENARIOS+=("$arg") ;;
-	*) die "unknown argument: $arg (expected --installed, systemd, busybox, dropbear or kerneltun)" ;;
+	systemd | busybox | dropbear | kerneltun | dropbeartun) SCENARIOS+=("$arg") ;;
+	*) die "unknown argument: $arg (expected --installed, systemd, busybox, dropbear, kerneltun or dropbeartun)" ;;
 	esac
 done
 if ((${#SCENARIOS[@]} == 0)); then
 	# shellcheck disable=SC2206 # a space separated override is the point
-	SCENARIOS=(${BOOT_SCENARIOS:-systemd busybox dropbear kerneltun})
+	SCENARIOS=(${BOOT_SCENARIOS:-systemd busybox dropbear kerneltun dropbeartun})
 fi
 
 has_scenario() {
@@ -134,9 +142,19 @@ has_scenario() {
 	return 1
 }
 
+# Scenarios that put a dropbear in the image, however they network it.
+uses_dropbear() {
+	local s
+	for s in "${SCENARIOS[@]}"; do
+		[[ ${SC_HOOKS[$s]} == *testdropbear* ]] && return 0
+	done
+	return 1
+}
+is_dropbear_sc() { [[ ${SC_HOOKS[$1]} == *testdropbear* ]]; }
+
 need_root
 need_cmd mkinitcpio qemu-system-x86_64 curl jq depmod ssh ssh-keygen
-has_scenario dropbear && need_cmd dropbearkey
+uses_dropbear && need_cmd dropbearkey
 need_pkg tailscale
 
 WORK=$(mktemp -d)
@@ -686,7 +704,7 @@ assert_ssh() {
 		-o ConnectTimeout=20
 		-o "ProxyCommand=tailscale --socket=$CLIENT_SOCK nc %h %p"
 	)
-	if [[ $sc == dropbear ]]; then
+	if is_dropbear_sc "$sc"; then
 		# Root, not $SSH_USER: dropbear requires the authorized_keys path to be
 		# owned by the login user, and mkinitcpio squashes image files to uid 0.
 		# See tests/initcpio/install/testdropbear.
@@ -734,14 +752,18 @@ EOF
 # whose public half becomes the image's authorized_keys. Both exist only for
 # this run; the host key's public half is what the ssh assertions compare the
 # offered key against, same as the Tailscale SSH scenarios.
-if has_scenario dropbear; then
+if uses_dropbear; then
 	dropbearkey -t ed25519 -f "$WORK/dropbear_host_key" >/dev/null 2>&1
 	dropbearkey -y -f "$WORK/dropbear_host_key" 2>/dev/null |
-		grep '^ssh-ed25519' >"$WORK/hostkey.dropbear.pub"
-	[[ -s $WORK/hostkey.dropbear.pub ]] || die 'could not derive the dropbear host public key'
+		grep '^ssh-ed25519' >"$WORK/dropbear_host_key.pub"
+	[[ -s $WORK/dropbear_host_key.pub ]] || die 'could not derive the dropbear host public key'
 	ssh-keygen -q -t ed25519 -N '' -f "$WORK/dropbear_client_key"
 	export TESTDROPBEAR_HOSTKEY="$WORK/dropbear_host_key"
 	export TESTDROPBEAR_AUTHKEYS="$WORK/dropbear_client_key.pub"
+	# Every dropbear scenario bakes the same throwaway host key into its image.
+	for sc in "${SCENARIOS[@]}"; do
+		is_dropbear_sc "$sc" && cp "$WORK/dropbear_host_key.pub" "$WORK/hostkey.$sc.pub"
+	done
 fi
 
 for sc in "${SCENARIOS[@]}"; do
