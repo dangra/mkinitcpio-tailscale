@@ -28,6 +28,7 @@ die() {
 AUR_FILES=(
 	PKGBUILD
 	.gitignore
+	LICENSE
 	README.md
 	initcpio-hooks-tailscale
 	initcpio-install-tailscale
