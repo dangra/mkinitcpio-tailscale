@@ -469,9 +469,11 @@ run_scenario() {
 	cp -a "$WORK/state.$sc" "$TS_SETUPDIR"
 
 	cat >"$conf" <<-EOF
-		# tun is needed by tailscaled and the virtio drivers by the QEMU NIC.
-		# Listing them in MODULES both includes and autoloads them.
-		MODULES=(tun virtio_net virtio_pci)
+		# The virtio drivers are for the QEMU NIC; listing them in MODULES both
+		# includes and autoloads them. No tun: tailscaled runs with userspace
+		# networking, and its absence here is what proves that path needs no
+		# kernel module.
+		MODULES=(virtio_net virtio_pci)
 		BINARIES=()
 		FILES=()
 		HOOKS=(${SC_HOOKS[$sc]})

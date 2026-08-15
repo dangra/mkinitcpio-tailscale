@@ -138,11 +138,12 @@ assert_common() {
 	check "$label: tailscaled binary" in_list usr/bin/tailscaled
 	check "$label: tailscale binary" in_list usr/bin/tailscale
 	check "$label: getent" in_list usr/bin/getent
-	img_has_glob "$ROOT" "usr/lib/modules/$KVER/kernel/drivers/net/tun.ko*" "$label: tun module present"
-
-	# The node is registered with --netfilter-mode=off, so none of the
-	# netfilter userland or modules belong in the image; their absence is what
-	# keeps it small.
+	# tailscaled runs with userspace networking, so not even the tun module
+	# belongs in the image, and the netfilter userland and modules went the
+	# same way when the node started registering with --netfilter-mode=off;
+	# their absence is what keeps the image small.
+	check_fails "$label: no tun module in the image" \
+		bash -c "compgen -G '$ROOT/usr/lib/modules/$KVER/kernel/drivers/net/tun.ko*'"
 	check_fails "$label: no iptables in the image" in_list usr/bin/iptables
 	check_fails "$label: no xtables plugins in the image" test -d "$ROOT/usr/lib/xtables"
 	local nf
