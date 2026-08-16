@@ -51,7 +51,7 @@ jobs:
           # makepkg, --printsrcinfo and updpkgsums all refuse to run as root.
           useradd -m builder
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Tags for git describe, plus master's history for the ancestry check.
           fetch-depth: 0
@@ -136,7 +136,7 @@ jobs:
           # makepkg, --printsrcinfo and updpkgsums all refuse to run as root.
           useradd -m builder
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Prepare the workspace
         run: |
