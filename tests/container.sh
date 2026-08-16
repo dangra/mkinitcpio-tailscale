@@ -38,7 +38,7 @@ want() {
 want 01 && PKGS+=(shellcheck mkinitcpio)
 want 02 && PKGS+=(pacman-contrib namcap)
 want 03 && PKGS+=(mkinitcpio linux tailscale openssh)
-want 04 && PKGS+=(mkinitcpio linux tailscale openssh qemu-base jq curl dropbear)
+want 04 && PKGS+=(mkinitcpio linux tailscale openssh qemu-base jq curl dropbear opendoas)
 
 RUN_OPTS=()
 [[ -t 0 && -t 1 ]] && RUN_OPTS+=(-it)

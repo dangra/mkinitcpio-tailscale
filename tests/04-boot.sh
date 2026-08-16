@@ -477,6 +477,44 @@ check_fails '--tun never reached tailscale up' \
 	grep -q 'not defined' "$WORK/setup.tun.log"
 endgroup
 
+# --- escalation ------------------------------------------------------------
+# Everything above runs the helper as root, where xsu_pick returns nothing and
+# every escalated call runs bare -- so the sudo and doas paths would otherwise
+# ship untested. Register twice as an unprivileged user: once letting the
+# helper pick (sudo, present in this container), once forced onto doas via the
+# XSU override, which covers that mechanism too. Both must leave root-owned
+# state behind and a node registered.
+group 'escalation from an unprivileged user'
+ESC_USER=escuser
+useradd -m "$ESC_USER" 2>/dev/null || true
+printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$ESC_USER" >"/etc/sudoers.d/$ESC_USER"
+printf 'permit nopass %s as root\n' "$ESC_USER" >>/etc/doas.conf
+
+esc_register() { # label extra-env node
+	local label=$1 envs=$2 node=$3
+	rm -rf "$TS_SETUPDIR"
+	# shellcheck disable=SC2086 # envs is meant to word-split
+	if runuser -u "$ESC_USER" -- env $envs "$SETUP_HELPER" \
+		--hostname="$node" \
+		--login-server="$SERVER_URL" \
+		--authkey="$AUTHKEY" \
+		--no-ssh >"$WORK/setup.$label.log" 2>&1; then
+		pass "$label: the helper succeeds unprivileged"
+	else
+		fail "$label: the helper succeeds unprivileged" "$(cat "$WORK/setup.$label.log")"
+		return 0
+	fi
+	check "$label: the state landed root-owned" \
+		test "$(stat -c %u "$TS_SETUPDIR/tailscaled.state" 2>/dev/null)" = 0
+	check "$label: the state directory is root-owned and private" \
+		test "$(stat -c %u:%a "$TS_SETUPDIR" 2>/dev/null)" = 0:600
+	check "$label: the node registered" node_known "$node"
+}
+
+esc_register sudo-pick '' "${TS_NODE_NAME}-esudo"
+esc_register doas-forced 'XSU=doas' "${TS_NODE_NAME}-edoas"
+endgroup
+
 # --- a client on the tailnet ----------------------------------------------
 # Userspace networking keeps this working in an unprivileged container: no
 # /dev/net/tun, no NET_ADMIN, and reachability comes from `tailscale nc` used as
