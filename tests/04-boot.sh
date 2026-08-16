@@ -723,6 +723,7 @@ run_scenario() {
 
 	if ((online)); then
 		assert_ssh "$sc" "$node"
+		[[ $sc == systemd ]] && assert_survives_emergency "$sc" "$node" "$console" "$text"
 	else
 		warn "$sc: skipping the ssh assertions; the node never came online"
 	fi
@@ -731,6 +732,49 @@ run_scenario() {
 	wait "$QEMU_PID" 2>/dev/null
 	QEMU_PID=''
 	endgroup
+}
+
+# The systemd scenario boots without rootflags=x-systemd.device-timeout=0, so
+# it reaches the very failure the README warns about: systemd gives up on the
+# root device after 90s and drops the initramfs into emergency mode. Whether
+# tailscaled survives that decides whether a user whose boot timed out can
+# still get in and rescue it by hand, and the README says which -- so this
+# measures it rather than assuming.
+assert_survives_emergency() {
+	local sc=$1 node=$2 console=$3 text=$4
+	local deadline=$((SECONDS + 150)) reached=0
+
+	info "$sc: waiting for the root-device timeout to drop the guest into emergency mode"
+	while ((SECONDS < deadline)); do
+		sed -r 's/\x1B\[[0-9;?]*[a-zA-Z]//g; s/\x1B\][^\x07]*(\x07|\x1B\\)//g' \
+			"$console" >"$text" 2>/dev/null
+		if grep -qE 'Reached target Emergency Mode|You are in emergency mode' "$text"; then
+			reached=1
+			break
+		fi
+		kill -0 "$QEMU_PID" 2>/dev/null || break
+		sleep 5
+	done
+
+	if ((!reached)); then
+		warn "$sc: the guest never reported emergency mode; skipping the survival assertions"
+		return 0
+	fi
+	pass "$sc: the boot reached emergency mode, as an un-tuned systemd initramfs does"
+
+	# tailscaled is wanted by sysinit.target with DefaultDependencies=no, and
+	# emergency.target is started rather than isolated, so the expectation is
+	# that it keeps running -- which is only worth stating because the whole
+	# point is to find out.
+	if node_online "$node"; then
+		pass "$sc: the node is still online in emergency mode"
+	else
+		fail "$sc: the node is still online in emergency mode" \
+			"$(printf 'the initrd node dropped off the tailnet when the boot failed:\n%s' \
+				"$(tail -20 "$text" 2>/dev/null)")"
+		return 0
+	fi
+	check "$sc: ssh still works in emergency mode" ssh_runs_a_command
 }
 
 assert_ssh() {
