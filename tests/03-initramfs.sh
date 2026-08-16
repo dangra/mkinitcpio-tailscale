@@ -165,6 +165,10 @@ assert_common() {
 	# runtime hook and tailscaled read.
 	img_same "$ROOT" etc/default/tailscaled "$FIXTURE_SRC/default.env"
 	img_same "$ROOT" var/lib/tailscale/tailscaled.state "$FIXTURE_SRC/tailscaled.state"
+	# The node key, in an image whose Tailscale SSH may admit unprivileged
+	# logins. Nothing but root has any business reading it.
+	check "$label: the node key is mode 600 in the image" \
+		test "$(stat -c %a "$ROOT/var/lib/tailscale/tailscaled.state" 2>/dev/null)" = 600
 
 	# Both the runtime hook and Arch's tailscaled.service invoke
 	# /usr/sbin/tailscaled. mkinitcpio creates usr/sbin as a *relative* symlink
