@@ -75,6 +75,7 @@ if diff -u - "$WORK/staged.files" >"$WORK/staged.diff" <<-'EOF'; then
 	initcpio-install-tailscale
 	libalpm-hook-tailscale
 	libalpm-script-tailscale
+	mkinitcpio-tailscale.install
 	setup-initcpio-tailscale
 EOF
 	pass 'staged tree contains exactly the release file set'
@@ -151,6 +152,12 @@ fi
 bsdtar -xOf "$PKG" usr/lib/initcpio/install/tailscale >"$WORK/installed-hook"
 check 'packaged install hook matches the source file' \
 	cmp -s "$WORK/installed-hook" "$REPO_ROOT/initcpio-install-tailscale"
+
+# The payload list above ignores dotfiles, so the scriptlet gets its own check:
+# without .INSTALL in the package, the pre-2.0.0 TUN pinning never runs.
+bsdtar -xOf "$PKG" .INSTALL >"$WORK/installed-scriptlet" 2>/dev/null
+check 'package embeds the install scriptlet' \
+	cmp -s "$WORK/installed-scriptlet" "$REPO_ROOT/mkinitcpio-tailscale.install"
 endgroup
 
 # Hand the package to the caller (CI uploads it as an artifact).

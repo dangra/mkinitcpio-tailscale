@@ -500,6 +500,42 @@ check 'I: and points at this helper' grep -q 'run setup-initcpio-tailscale' "$WO
 restore_conf
 endgroup
 
+# --- the install scriptlet --------------------------------------------------
+# post_upgrade pins TUN="tailscale0" into an existing default.env exactly when
+# the old version predates 2.0.0 and the user has not chosen a TUN themselves,
+# preserving the kernel-TUN behaviour such machines were set up with.
+group 'variant K: install scriptlet pins TUN across the 2.0.0 boundary'
+
+# shellcheck source=/dev/null
+. "$REPO_ROOT/mkinitcpio-tailscale.install"
+
+fixtures_write
+check 'K: fixture has no TUN line' bash -c "! grep -q '^TUN=' $TS_SETUPDIR/default.env"
+post_upgrade 2.1.0 1.5.0 >"$WORK/scriptlet.log"
+check 'K: upgrade from 1.5.0 pins TUN=tailscale0' \
+	grep -qx 'TUN="tailscale0"' "$TS_SETUPDIR/default.env"
+check 'K: and says so' grep -q 'userspace networking' "$WORK/scriptlet.log"
+
+post_upgrade 2.2.0 2.0.0 >"$WORK/scriptlet2.log" || true
+check 'K: idempotent for later upgrades' \
+	test "$(grep -c '^TUN=' "$TS_SETUPDIR/default.env")" = 1
+
+fixtures_write
+printf 'TUN=""\n' >>"$TS_SETUPDIR/default.env"
+post_upgrade 2.1.0 1.5.0 >/dev/null || true
+check 'K: an existing TUN choice is respected' \
+	grep -qx 'TUN=""' "$TS_SETUPDIR/default.env"
+
+fixtures_write
+post_upgrade 2.1.0 2.0.0 >/dev/null || true
+check_fails 'K: upgrades from 2.0.0 are not touched' \
+	grep -q '^TUN=' "$TS_SETUPDIR/default.env"
+
+rm -rf "$TS_SETUPDIR"
+post_upgrade 2.1.0 1.5.0 >/dev/null || true
+check_fails 'K: nothing is created where setup never ran' test -e "$TS_SETUPDIR/default.env"
+endgroup
+
 if ((TESTS_FAILED)) && [[ -n ${ARTIFACT_DIR:-} ]]; then
 	install -d "$ARTIFACT_DIR"
 	cp "$WORK"/build.*.log "$ARTIFACT_DIR/" 2>/dev/null || true

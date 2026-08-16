@@ -12,7 +12,7 @@ cd "$REPO_ROOT" || die "cannot cd to $REPO_ROOT"
 
 # libalpm-hook-tailscale is not here: it is libalpm INI, not shell.
 SCRIPTS=(initcpio-install-tailscale initcpio-hooks-tailscale setup-initcpio-tailscale
-	libalpm-script-tailscale)
+	libalpm-script-tailscale mkinitcpio-tailscale.install)
 # The test-only mkinitcpio hooks end up in real images too, so they are held to
 # the same standard as the shipped ones.
 TEST_SCRIPTS=(tests/*.sh scripts/*.sh tests/initcpio/install/* tests/initcpio/hooks/*)

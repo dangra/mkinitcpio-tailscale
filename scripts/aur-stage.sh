@@ -35,6 +35,7 @@ AUR_FILES=(
 	setup-initcpio-tailscale
 	libalpm-hook-tailscale
 	libalpm-script-tailscale
+	mkinitcpio-tailscale.install
 )
 
 usage() {

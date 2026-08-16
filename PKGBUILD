@@ -23,6 +23,7 @@ license=("GPL-2.0-or-later")
 # without the package installed.
 depends=("mkinitcpio" "tailscale")
 optdepends=("openssh: host key generation for the default Tailscale SSH setup")
+install=mkinitcpio-tailscale.install
 source=("initcpio-hooks-tailscale"
   "initcpio-install-tailscale"
   "setup-initcpio-tailscale"
