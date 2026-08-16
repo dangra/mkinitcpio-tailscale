@@ -50,8 +50,9 @@ setup-initcpio-tailscale
 
 The helper starts a throwaway `tailscaled` and prints a URL and QR code to
 authenticate with; it does not touch the Tailscale service your booted system
-runs. No root needed up front: it escalates through `sudo` only for the final
-writes under `/etc/initcpio/tailscale/`. Any extra arguments are passed
+runs. No root needed up front: it escalates through `sudo` or `doas`,
+whichever is present, only for the final writes under
+`/etc/initcpio/tailscale/`. Any extra arguments are passed
 straight through to `tailscale up`, so flags like `--login-server=` work as
 usual.
 

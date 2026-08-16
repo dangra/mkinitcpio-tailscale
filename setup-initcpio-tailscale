@@ -52,6 +52,25 @@ die() {
   exit 1
 }
 
+# How to escalate for the few writes under /etc: not at all as root, otherwise
+# the first of sudo/doas on PATH. Every use is a plain command prefix, which
+# both take alike. XSU overrides the choice for anything else that does too.
+xsu_pick() {
+  local c
+  [[ "$(id -u)" == 0 ]] && return 0
+  if [[ -n ${XSU:-} ]]; then
+    printf '%s' "$XSU"
+    return 0
+  fi
+  for c in sudo doas; do
+    if command -v "$c" >/dev/null; then
+      printf '%s' "$c"
+      return 0
+    fi
+  done
+  die "not root and neither sudo nor doas is available; re-run as root or set XSU"
+}
+
 # --- --check: read-only verification of an existing setup -------------------
 
 CHECK_RC=0
@@ -78,8 +97,8 @@ effective_hooks() {
 }
 
 run_check() {
-  local xsu=""
-  [[ "$(id -u)" != 0 ]] && xsu=sudo
+  local xsu
+  xsu=$(xsu_pick)
 
   # The configuration the install hook will copy into the image.
   if $xsu test -s "${TS_STATEDIR}/tailscaled.state"; then
@@ -320,7 +339,7 @@ if ! tailscale --socket="$socket" up --qr --accept-risk=lose-ssh "$@"; then
   die "Failed to configure tailscale. Check daemon logs at /tmp/setup-initcpio-tailscale-daemon.log"
 fi
 
-[[ "$(id -u)" != 0 ]] && xsu=sudo || xsu=""
+xsu=$(xsu_pick)
 $xsu install -o root -g root -m600 -d "${TS_STATEDIR}"
 $xsu install -o root -g root -m644 -t "${TS_STATEDIR}" "${SETUPDIR}/tailscaled.state"
 
@@ -329,7 +348,7 @@ $xsu install -o root -g root -m644 -t "${TS_STATEDIR}" "${SETUPDIR}/tailscaled.s
 # their PORT or FLAGS. Only a missing or empty file gets the defaults; empty
 # counts because the install hook refuses to build from an empty one anyway.
 # The test runs through $xsu: the state directory is not traversable by other
-# users, so a plain -s would read as absent whenever sudo is in play.
+# users, so a plain -s would read as absent whenever escalation is in play.
 if $xsu test -s "${TS_STATEDIR}/default.env"; then
   info "keeping existing ${TS_STATEDIR}/default.env"
 else
