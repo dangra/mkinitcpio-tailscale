@@ -513,6 +513,22 @@ esc_register() { # label extra-env node
 
 esc_register sudo-pick '' "${TS_NODE_NAME}-esudo"
 esc_register doas-forced 'XSU=doas' "${TS_NODE_NAME}-edoas"
+
+# --check is where escalation matters most: the state directory is root-only,
+# so an unprivileged run sees nothing except through the same prefix. A valid
+# HOOKS= is fabricated the way tests/03-initramfs.sh does, since the
+# container's stock configuration knows nothing of the hook; the scenario
+# builds below use their own -c configs and never read this file.
+cp -a /etc/mkinitcpio.conf "$WORK/mkinitcpio.conf.orig" 2>/dev/null || true
+printf 'HOOKS=(base systemd sd-network tailscale sd-encrypt filesystems)\n' \
+	>/etc/mkinitcpio.conf
+rm -rf /etc/mkinitcpio.conf.d
+check 'sudo-pick: --check passes unprivileged' \
+	runuser -u "$ESC_USER" -- "$SETUP_HELPER" --check
+check 'doas-forced: --check passes unprivileged' \
+	runuser -u "$ESC_USER" -- env XSU=doas "$SETUP_HELPER" --check
+[[ -f $WORK/mkinitcpio.conf.orig ]] &&
+	cp -a "$WORK/mkinitcpio.conf.orig" /etc/mkinitcpio.conf
 endgroup
 
 # --- a client on the tailnet ----------------------------------------------
