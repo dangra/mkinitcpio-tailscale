@@ -45,13 +45,15 @@ yay -S mkinitcpio-tailscale
 ### 1. Register the initrd node
 
 ```sh
-sudo setup-initcpio-tailscale
+setup-initcpio-tailscale
 ```
 
 The helper starts a throwaway `tailscaled` and prints a URL and QR code to
 authenticate with; it does not touch the Tailscale service your booted system
-runs. Any extra arguments are passed straight through to `tailscale up`, so
-flags like `--login-server=` work as usual.
+runs. No root needed up front: it escalates through `sudo` only for the final
+writes under `/etc/initcpio/tailscale/`. Any extra arguments are passed
+straight through to `tailscale up`, so flags like `--login-server=` work as
+usual.
 
 It registers a node named after your host with an `-initrd` suffix (a machine
 called `homeserver` appears as `homeserver-initrd`) with [Tailscale
@@ -126,7 +128,7 @@ Before rebooting a machine you cannot walk up to, confirm the setup end to
 end:
 
 ```sh
-sudo setup-initcpio-tailscale --check
+setup-initcpio-tailscale --check
 ```
 
 It verifies, without changing anything, that the configuration files exist,
@@ -181,7 +183,7 @@ ssh root@homeserver-initrd
 Turn it off with:
 
 ```sh
-sudo setup-initcpio-tailscale --no-ssh
+setup-initcpio-tailscale --no-ssh
 ```
 
 which also removes any host keys an earlier run left in
