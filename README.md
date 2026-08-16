@@ -62,8 +62,8 @@ SSH](#tailscale-ssh-server) turned on, and leaves the node key and the SSH host
 keys in `/etc/initcpio/tailscale/`. Pass `--no-ssh` if you would rather run
 `dropbear` or `tinyssh` in the image instead.
 
-**Disable key expiry for that node** in the [machines
-list](https://console.tailscale.com/admin/machines). Node keys expire by default,
+**Disable key expiry for that node** on the [Machines page of the Tailscale
+admin console](https://console.tailscale.com/admin/machines). Node keys expire by default,
 and an expired initrd node cannot reach your tailnet, which you would discover
 while locked out of a machine that is waiting for its passphrase.
 
