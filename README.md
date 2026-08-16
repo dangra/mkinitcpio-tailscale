@@ -195,8 +195,11 @@ hook brings `lo` up itself, since nothing else in a busybox image would. And
 log in as root: everything in an initramfs is owned by root, and
 `dropbear` refuses an `authorized_keys` it does not consider owned by the user
 logging in, so root is the login that works. That is the same reason the
-retired dropbear hooks used a `root_key`. The boot test exercises exactly this
-setup, dropbear included.
+retired dropbear hooks used a `root_key`. And if your daemon really must bind
+an interface address, register with `--tun`: the initramfs then runs on a
+kernel TUN device (`tailscale0`) and inbound connections arrive through it the
+ordinary way. The boot test exercises all of this, dropbear and both network
+stacks included.
 
 Note: the Tailscale SSH server only accepts connections from within your
 tailnet. The node won't accept local connections unless the client is also part
