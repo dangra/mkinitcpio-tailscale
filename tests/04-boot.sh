@@ -523,6 +523,9 @@ cp -a /etc/mkinitcpio.conf "$WORK/mkinitcpio.conf.orig" 2>/dev/null || true
 printf 'HOOKS=(base systemd sd-network tailscale sd-encrypt filesystems)\n' \
 	>/etc/mkinitcpio.conf
 rm -rf /etc/mkinitcpio.conf.d
+# The elevated half must not be reachable except through escalation.
+check_fails 'the internal install flag refuses unprivileged callers' \
+	runuser -u "$ESC_USER" -- "$SETUP_HELPER" --internal-install /tmp yes ''
 check 'sudo-pick: --check passes unprivileged' \
 	runuser -u "$ESC_USER" -- "$SETUP_HELPER" --check
 check 'doas-forced: --check passes unprivileged' \
