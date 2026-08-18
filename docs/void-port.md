@@ -1,9 +1,11 @@
 # Reusing this hook on Void Linux
 
-Research notes on what it would take to run mkinitcpio-tailscale on Void Linux.
-This is a report, not a commitment: nothing in the repo changes with it, and the
-gaps it lists are the work a port would consist of. Facts were checked against
-the Void handbook, the void-packages templates and a live mirror on 2026-08-18.
+Research notes on what it takes to run mkinitcpio-tailscale on Void Linux,
+and what of that has landed. The hook and setup helper now run unchanged on
+Void, and CI proves it: the `initramfs (void)` job and `make test-void` build
+and inspect images with Void's mkinitcpio on a host with no systemd. What
+remains open is listed below. Facts were checked against the Void handbook,
+the void-packages templates and a live mirror on 2026-08-18.
 
 ## Why Void is a natural target
 
@@ -38,10 +40,13 @@ detection (`add_systemd_unit` never exists on Void), so the systemd branch is
 dead code rather than a porting problem, and the busybox branch is the one the
 QEMU boot matrix already exercises.
 
-## What already works unchanged
+## What works unchanged
 
-Most of the codebase is distro-neutral today:
+Most of the codebase is distro-neutral:
 
+- **The install hook** requires only that `tailscaled` be on PATH; it asks no
+  package manager anything. (`add_binary` would fail the build anyway; the
+  guard exists for the friendlier message.)
 - **The runtime hook** is busybox ash against mkinitcpio's own init; nothing in
   it is Arch's.
 - **The install hook's hardcoded `/usr/sbin/tailscaled`** resolves on Void even
@@ -58,9 +63,9 @@ Most of the codebase is distro-neutral today:
 - **The configuration paths** under `/etc/initcpio/tailscale/` carry no distro
   assumption.
 
-## The gap list
+## What stays Arch-only
 
-What a port would actually touch, in decreasing order of substance:
+The pieces with no Void counterpart, in decreasing order of substance:
 
 1. **Rebuild on tailscale upgrades.** The libalpm hook and script pair has no
    XBPS equivalent: XBPS has no user-definable transaction hooks, so a package
@@ -68,17 +73,12 @@ What a port would actually touch, in decreasing order of substance:
    documentation: after a `tailscale` upgrade, run `mkinitcpio -P` (or
    `xbps-reconfigure -f linux<x>.<y>`) by hand, or the image keeps booting the
    old daemon. This is the one functional gap.
-2. **The `pacman -Qi tailscale` guard** in the install hook is likely not
-   needed at all: `add_binary` already fails the build when `tailscaled` is
-   absent, so the guard only buys a friendlier message, and
-   `command -v tailscaled` buys the same one without asking any package
-   manager. Deletion or that one-line swap makes the hook portable.
-3. **The alpm scriptlet** (`mkinitcpio-tailscale.install`, the 2.0.0 TUN
+2. **The alpm scriptlet** (`mkinitcpio-tailscale.install`, the 2.0.0 TUN
    migration) is irrelevant to a fresh Void install and needs no counterpart.
-4. **The PKGBUILD and AUR pipeline** are Arch-only by nature and stay that way;
+3. **The PKGBUILD and AUR pipeline** are Arch-only by nature and stay that way;
    see the next section for why no Void package is planned.
-5. **Docs text.** The README's install and next-steps guidance assumes pacman
-   and the AUR, and its systemd rows do not apply on Void.
+4. **The README's install guidance** assumes pacman and the AUR, and its
+   systemd rows do not apply on Void; its Void section points back here.
 
 ## The existing Void package
 
@@ -97,10 +97,9 @@ netfilter in the image, persisted Tailscale SSH host identity) can install it
 from git; users who want an `xbps-install` one-liner already have one. A
 void-packages submission under a colliding name is not on the table.
 
-## Manual install sketch
+## Manual install
 
-What a Void user would do today, once the gap-list items land. File
-destinations mirror the PKGBUILD's:
+What a Void user does today:
 
 ```sh
 xbps-install mkinitcpio mkinitcpio-encrypt mkinitcpio-nfs-utils tailscale
@@ -119,19 +118,16 @@ before `encrypt` in `HOOKS=`, rebuild with `mkinitcpio -P`, and verify with
 `setup-initcpio-tailscale --check`. The one Void-specific habit is rebuilding
 by hand after a `tailscale` upgrade, since no hook does it for you.
 
-## Validation plan
+## Validation
 
-When the port happens, in this order:
-
-1. **A Void container lane** beside the Arch one in `tests/container.sh`:
-   run the lint, packaging and image-contents scripts (tests/01 to 03) in
-   `ghcr.io/void-linux/void-glibc`, installing `mkinitcpio` and `tailscale`
-   via xbps and copying the hook files into place by hand, since there is no
-   package to install. Building the image with Void's mkinitcpio 41 and
-   inspecting it for `tailscaled`, the passwd database and the tun-module
-   logic covers most of what the port could break.
-2. **A Void QEMU boot scenario** against the throwaway headscale, later. The
-   boot matrix stays Arch-only until the container lane exists and is green.
+1. **The Void container lane** exists: `make test-void` (or
+   `tests/container.sh void`) runs the lint and image-contents stages in
+   `ghcr.io/void-linux/void-glibc`, and CI runs the same as the
+   `initramfs (void)` job on every change. Images are built with Void's
+   mkinitcpio on a host with no systemd, so the suite exercises exactly the
+   busybox variants a Void machine would boot, and skips the systemd ones.
+2. **A Void QEMU boot scenario** against the throwaway headscale remains
+   future work; the boot matrix stays Arch-only until someone takes it on.
 
 [void-mkinitcpio]: https://github.com/void-linux/void-packages/blob/master/srcpkgs/mkinitcpio/template
 [void-kernel]: https://docs.voidlinux.org/config/kernel.html
