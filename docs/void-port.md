@@ -97,6 +97,14 @@ netfilter in the image, persisted Tailscale SSH host identity) can install it
 from git; users who want an `xbps-install` one-liner already have one. A
 void-packages submission under a colliding name is not on the table.
 
+For building a proper XBPS package locally all the same, the repo carries an
+xbps-src template at [contrib/void/template](../contrib/void/template) under
+the name `initcpio-tailscale`, the name this repo's own files already carry.
+It marks `conflicts` with the official package, since both install the
+`tailscale` hook under `/usr/lib/initcpio`, and it is not submitted anywhere:
+copy it to `srcpkgs/initcpio-tailscale` in a void-packages checkout and run
+`./xbps-src pkg initcpio-tailscale`.
+
 ## Manual install
 
 What a Void user does today:
