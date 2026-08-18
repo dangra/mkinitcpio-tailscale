@@ -142,6 +142,11 @@ the initrd node's key is not about to expire. Then confirm the node is live:
 tailscale status | grep -- -initrd    # from any other node on your tailnet
 ```
 
+The image carries only what boots: `tailscaled`, not the `tailscale` CLI,
+which nothing in early userspace executes and which costs about a quarter of
+the image. To have it available for debugging from the emergency shell, set
+`CLI="yes"` in `/etc/initcpio/tailscale/default.env` and rebuild.
+
 From here on the image looks after itself: the package ships a pacman hook
 that reruns `mkinitcpio -P` whenever the `tailscale` package is upgraded, since
 the image carries its own copy of `tailscaled` that would otherwise stay at

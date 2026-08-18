@@ -126,10 +126,11 @@ snapshot() {
 in_list() { grep -qxF -- "$1" "$LIST"; }
 
 # Shared expectations for every successful build. The optional second
-# argument flips the tun expectation: 'tun' for a TUN="..." build, which must
-# carry the module, anything else for the default, which must not.
+# argument holds space-separated opt-ins the build enabled: 'tun' for a
+# TUN="..." build, which must carry the module, 'cli' for a CLI="yes" build,
+# which must carry the tailscale CLI; defaults must carry neither.
 assert_common() {
-	local label=$1 tun=${2:-}
+	local label=$1 opts=" ${2:-} "
 
 	# A runtime hook whose shebang names an interpreter the image does not ship
 	# makes mkinitcpio warn on every rebuild the user runs. Cheap to keep quiet,
@@ -138,13 +139,19 @@ assert_common() {
 	check_fails "$label: the build logs no missing-interpreter warning" \
 		grep -q 'Possibly missing' "$LOG"
 	check "$label: tailscaled binary" in_list usr/bin/tailscaled
-	check "$label: tailscale binary" in_list usr/bin/tailscale
 	check "$label: getent" in_list usr/bin/getent
+	# The CLI is a debugging opt-in (CLI="yes" in default.env); nothing in the
+	# boot path executes it, and by default its 22MB stays out of the image.
+	if [[ $opts == *' cli '* ]]; then
+		check "$label: tailscale CLI present for the opt-in" in_list usr/bin/tailscale
+	else
+		check_fails "$label: no tailscale CLI in the image" in_list usr/bin/tailscale
+	fi
 	# tailscaled runs with userspace networking by default, so not even the
 	# tun module belongs in the image -- unless default.env opts into a kernel
 	# device, and then it must be there. The netfilter userland and modules
 	# are always absent since the node registers with --netfilter-mode=off.
-	if [[ $tun == tun ]]; then
+	if [[ $opts == *' tun '* ]]; then
 		img_has_glob "$ROOT" "usr/lib/modules/$KVER/kernel/drivers/net/tun.ko*" \
 			"$label: tun module present for the kernel TUN opt-in"
 	else
@@ -338,6 +345,20 @@ if build_image 'base udev tailscale'; then
 	assert_common D2-bb tun
 else
 	fail 'D2: busybox build with TUN=tailscale0' "$(tail -30 "$LOG")"
+fi
+endgroup
+
+# --- variant D3: the CLI opt-in ---------------------------------------------
+group 'variant D3: CLI="yes" puts the tailscale CLI back'
+fixtures_write
+printf 'CLI="yes"\n' >>"$FIXTURE_SRC/default.env"
+printf 'CLI="yes"\n' >>"$TS_SETUPDIR/default.env"
+if build_image 'base systemd tailscale'; then
+	pass 'D3: systemd build with CLI=yes'
+	snapshot
+	assert_common D3 cli
+else
+	fail 'D3: systemd build with CLI=yes' "$(tail -30 "$LOG")"
 fi
 endgroup
 
@@ -594,6 +615,13 @@ if build_image 'base systemd tailscale' >/dev/null 2>&1; then
 		grep -q 'predates the installed tailscaled' "$WORK/check.fresh.log"
 	check 'L: and it is still recognised as carrying tailscaled' \
 		grep -q 'contains tailscaled' "$WORK/check.fresh.log"
+
+	# CLI configured but the image predates the opt-in: the same configured-
+	# but-not-rebuilt break the tun check catches.
+	printf 'CLI="yes"\n' >>"$TS_SETUPDIR/default.env"
+	bash "$REPO_ROOT/setup-initcpio-tailscale" --check >"$WORK/check.cli.log" 2>&1 || true
+	check 'L: a configured CLI missing from the image fails' \
+		grep -q 'lacks the tailscale CLI' "$WORK/check.cli.log"
 
 	rm -f /boot/initramfs-staletest.img
 	restore_conf
