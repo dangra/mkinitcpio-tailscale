@@ -164,8 +164,30 @@ CLIENT_PID=''
 CLIENT_SOCK="$WORK/client.sock"
 CLIENT_NAME=${CLIENT_NAME:-ci-client}
 
+# Undo the escalation group's host changes: a leftover account that can
+# become root without a password is not something to leave on a workstation,
+# and fixtures.sh documents running this suite on one (ALLOW_UNSAFE=1).
+ESC_USER=escuser
+ESC_SETUP_DONE=0
+ESC_DOAS_BACKUP=''
+
+esc_cleanup() {
+	((ESC_SETUP_DONE)) || return 0
+	rm -f "/etc/sudoers.d/$ESC_USER"
+	if [[ -n $ESC_DOAS_BACKUP && -e $ESC_DOAS_BACKUP ]]; then
+		cp -a "$ESC_DOAS_BACKUP" /etc/doas.conf
+		rm -f "$ESC_DOAS_BACKUP"
+	else
+		rm -f /etc/doas.conf
+	fi
+	userdel -r "$ESC_USER" 2>/dev/null
+	ESC_SETUP_DONE=0
+	return 0
+}
+
 cleanup_all() {
 	local rc=$?
+	esc_cleanup
 	[[ -n $QEMU_PID ]] && kill "$QEMU_PID" 2>/dev/null
 	[[ -n $CLIENT_PID ]] && kill "$CLIENT_PID" 2>/dev/null
 	[[ -n $HEADSCALE_PID ]] && kill "$HEADSCALE_PID" 2>/dev/null
@@ -487,8 +509,12 @@ endgroup
 # XSU override, which covers that mechanism too. Both must leave root-owned
 # state behind and a node registered.
 group 'escalation from an unprivileged user'
-ESC_USER=escuser
 useradd -m "$ESC_USER" 2>/dev/null || true
+if [[ -e /etc/doas.conf ]]; then
+	ESC_DOAS_BACKUP=$(mktemp)
+	cp -a /etc/doas.conf "$ESC_DOAS_BACKUP"
+fi
+ESC_SETUP_DONE=1
 printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$ESC_USER" >"/etc/sudoers.d/$ESC_USER"
 printf 'permit nopass %s as root\n' "$ESC_USER" >>/etc/doas.conf
 
@@ -521,7 +547,8 @@ esc_register doas-forced 'XSU=doas' "${TS_NODE_NAME}-edoas"
 # HOOKS= is fabricated the way tests/03-initramfs.sh does, since the
 # container's stock configuration knows nothing of the hook; the scenario
 # builds below use their own -c configs and never read this file.
-cp -a /etc/mkinitcpio.conf "$WORK/mkinitcpio.conf.orig" 2>/dev/null || true
+# fixtures_init stashed the real configuration; conf_restore below puts it
+# back, and fixtures_cleanup does it again on the way out.
 printf 'HOOKS=(base systemd sd-network tailscale sd-encrypt filesystems)\n' \
 	>/etc/mkinitcpio.conf
 rm -rf /etc/mkinitcpio.conf.d
@@ -537,8 +564,8 @@ check 'doas-forced: --check passes unprivileged' \
 check 'the unprivileged --check keeps an explicit --hostname' \
 	bash -c "runuser -u '$ESC_USER' -- '$SETUP_HELPER' --check --hostname=zzz-initrd 2>&1 |
 		grep -q zzz-initrd"
-[[ -f $WORK/mkinitcpio.conf.orig ]] &&
-	cp -a "$WORK/mkinitcpio.conf.orig" /etc/mkinitcpio.conf
+esc_cleanup
+conf_restore
 endgroup
 
 # --- a client on the tailnet ----------------------------------------------

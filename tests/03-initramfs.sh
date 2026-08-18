@@ -415,12 +415,10 @@ run_alpm() { PATH="$ALPM_SHIM:$PATH" bash "$ALPM_SCRIPT"; }
 
 # This group owns /etc/mkinitcpio.conf for its duration; put back whatever the
 # container had. $TS_SETUPDIR needs no such care -- fixtures_cleanup covers it.
-cp -a /etc/mkinitcpio.conf "$WORK/mkinitcpio.conf.orig" 2>/dev/null || true
-restore_conf() {
-	rm -rf /etc/mkinitcpio.conf.d
-	[[ -f $WORK/mkinitcpio.conf.orig ]] &&
-		cp -a "$WORK/mkinitcpio.conf.orig" /etc/mkinitcpio.conf
-}
+# fixtures_init stashed the real configuration, drop-ins included, and
+# fixtures_cleanup puts it back however this script exits; restoring mid-run
+# is the same call.
+restore_conf() { conf_restore; }
 
 : >"$ALPM_CALLS"
 printf 'HOOKS=(base udev block filesystems)\n' >/etc/mkinitcpio.conf

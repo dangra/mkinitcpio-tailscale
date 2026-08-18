@@ -20,6 +20,33 @@ in_container() {
 	virt=$(systemd-detect-virt -c 2>/dev/null) && [[ $virt != none ]]
 }
 
+# The mkinitcpio configuration is host state too: these tests fabricate HOOKS=
+# arrays to drive the hook and the doctor, and on a real host (ALLOW_UNSAFE=1)
+# what was there has to come back -- drop-ins included, since that is where a
+# modern install keeps HOOKS=.
+CONF_BACKUP=''
+
+conf_stash() {
+	CONF_BACKUP=$(mktemp -d)
+	[[ -e /etc/mkinitcpio.conf ]] && cp -a /etc/mkinitcpio.conf "$CONF_BACKUP/conf"
+	[[ -d /etc/mkinitcpio.conf.d ]] && cp -a /etc/mkinitcpio.conf.d "$CONF_BACKUP/conf.d"
+	return 0
+}
+
+# Idempotent, so a test can put the configuration back mid-run and the exit
+# path can do it again without a second stash.
+conf_restore() {
+	[[ -n $CONF_BACKUP ]] || return 0
+	rm -rf /etc/mkinitcpio.conf.d
+	if [[ -e $CONF_BACKUP/conf ]]; then
+		cp -a "$CONF_BACKUP/conf" /etc/mkinitcpio.conf
+	else
+		rm -f /etc/mkinitcpio.conf
+	fi
+	[[ -d $CONF_BACKUP/conf.d ]] && cp -a "$CONF_BACKUP/conf.d" /etc/mkinitcpio.conf.d
+	return 0
+}
+
 fixtures_init() {
 	if [[ ${ALLOW_UNSAFE:-0} != 1 ]] && ! in_container; then
 		die "refusing to run outside a container: this would clobber $TS_SETUPDIR (your real node key).
@@ -34,6 +61,7 @@ fixtures_init() {
 		warn "moved existing $TS_SETUPDIR aside; it will be restored on exit"
 	fi
 	FIXTURE_SRC=$(mktemp -d)
+	conf_stash
 	trap fixtures_cleanup EXIT
 }
 
@@ -45,6 +73,9 @@ fixtures_cleanup() {
 		rm -rf "$FIXTURE_BACKUP"
 	fi
 	[[ -n $FIXTURE_SRC ]] && rm -rf "$FIXTURE_SRC"
+	conf_restore
+	[[ -n $CONF_BACKUP ]] && rm -rf "$CONF_BACKUP"
+	CONF_BACKUP=''
 	return $rc
 }
 
