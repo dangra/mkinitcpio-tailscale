@@ -64,6 +64,58 @@ else
 fi
 endgroup
 
+# --- the setup helper's argument scan ---------------------------------------
+# The scan decides what reaches `tailscale up`, what default.env records and
+# which node --check looks at, and until now only the QEMU stage exercised it
+# -- minutes per run, and only along the paths a boot happens to take. The
+# helper prints its decisions and stops when asked, so this is a fast unit
+# test of the real script rather than a copy of its parser.
+group 'setup argument scan'
+
+# scan_is <expectation> -- <args...>
+scan_is() {
+	local want=$1 got
+	shift 2 # drop the -- separator
+	got=$(HOSTNAME=testbox "$REPO_ROOT/setup-initcpio-tailscale" \
+		--internal-print-args "$@" 2>&1 | tr '\n' ' ')
+	got=${got% }
+	if [[ $got == "$want" ]]; then
+		pass "scan: ${*:-<no arguments>}"
+	else
+		fail "scan: ${*:-<no arguments>}" "$(printf 'want: %s\ngot:  %s' "$want" "$got")"
+	fi
+}
+
+# The defaults the helper fills in when told nothing.
+scan_is 'hostname=testbox-initrd ssh=yes tun= check=no argv=--hostname=testbox-initrd --ssh --netfilter-mode=off' --
+# Tailscale SSH: off by request, and the flag never reaches tailscale up twice.
+scan_is 'hostname=testbox-initrd ssh=no tun= check=no argv=--hostname=testbox-initrd --netfilter-mode=off' -- --no-ssh
+scan_is 'hostname=testbox-initrd ssh=yes tun= check=no argv=--hostname=testbox-initrd --netfilter-mode=off --ssh' -- --ssh
+# The spellings Go's flag parser accepts, which the scan has to read the same way.
+scan_is 'hostname=testbox-initrd ssh=no tun= check=no argv=--hostname=testbox-initrd --netfilter-mode=off -ssh=false' -- -ssh=false
+scan_is 'hostname=testbox-initrd ssh=yes tun= check=no argv=--hostname=testbox-initrd --netfilter-mode=off --ssh=true' -- --ssh=true
+# Hostname in both forms, and the value the rest of the script will use.
+scan_is 'hostname=other-initrd ssh=yes tun= check=no argv=--ssh --netfilter-mode=off --hostname=other-initrd' -- --hostname=other-initrd
+scan_is 'hostname=other-initrd ssh=yes tun= check=no argv=--ssh --netfilter-mode=off --hostname other-initrd' -- --hostname other-initrd
+# The kernel TUN opt-in, defaulted and named.
+scan_is 'hostname=testbox-initrd ssh=yes tun=tailscale0 check=no argv=--hostname=testbox-initrd --ssh --netfilter-mode=off' -- --tun
+scan_is 'hostname=testbox-initrd ssh=yes tun=ts9 check=no argv=--hostname=testbox-initrd --ssh --netfilter-mode=off' -- --tun=ts9
+# --check is deferred to the end of the scan, so a later --hostname reaches it.
+scan_is 'hostname=zzz-initrd ssh=yes tun= check=yes argv=--ssh --netfilter-mode=off --hostname=zzz-initrd' -- --check --hostname=zzz-initrd
+# An explicit netfilter mode wins over the injected default, and unknown flags
+# pass through untouched.
+scan_is 'hostname=testbox-initrd ssh=yes tun= check=no argv=--hostname=testbox-initrd --ssh --netfilter-mode=on' -- --netfilter-mode=on
+scan_is 'hostname=testbox-initrd ssh=yes tun= check=no argv=--hostname=testbox-initrd --ssh --netfilter-mode=off --advertise-tags=tag:initrd' -- --advertise-tags=tag:initrd
+
+# Rejections, each of which would otherwise surface much later.
+check_fails 'scan: --hostname without a value is refused' \
+	env HOSTNAME=testbox "$REPO_ROOT/setup-initcpio-tailscale" --internal-print-args --hostname
+check_fails 'scan: --tun= without a name is refused' \
+	env HOSTNAME=testbox "$REPO_ROOT/setup-initcpio-tailscale" --internal-print-args --tun=
+check_fails 'scan: --internal-install is refused unprivileged' \
+	env HOSTNAME=testbox "$REPO_ROOT/setup-initcpio-tailscale" --internal-install /tmp yes ''
+endgroup
+
 group 'hook contracts'
 # mkinitcpio sources these files and calls the functions by name; a rename would
 # leave a hook that builds cleanly and then does nothing at boot.

@@ -359,6 +359,7 @@ fi
 TS_SSH=yes
 TS_TUN=''
 DO_CHECK=no
+DUMP_ARGS=no
 FOUND_HOSTNAME_IN_ARGS=no
 FOUND_SSH_IN_ARGS=no
 FOUND_NETFILTER_IN_ARGS=no
@@ -404,6 +405,12 @@ for arg in "$@"; do
     FOUND_SSH_IN_ARGS=yes
     continue
     ;;
+  internal-print-args)
+    # A seam for tests/01-lint.sh: print what the scan decided and stop,
+    # before anything registers or writes. Internal, like --internal-install.
+    DUMP_ARGS=yes
+    continue
+    ;;
   tun)
     TS_TUN=tailscale0
     continue
@@ -430,10 +437,6 @@ for arg in "$@"; do
 done
 [[ $WANT_HOSTNAME == no ]] || die "--hostname needs a value"
 
-# --check verifies and exits; TS_HOSTNAME is settled by now, so it knows which
-# node to look for.
-[[ $DO_CHECK == no ]] || run_check
-
 # Defaults are prepended, so an argument the user did pass always has the last
 # word with the flag parser on the other end.
 #
@@ -446,6 +449,16 @@ set -- "${TS_ARGS[@]}"
 [[ $FOUND_NETFILTER_IN_ARGS == yes ]] || set -- --netfilter-mode=off "$@"
 [[ $FOUND_SSH_IN_ARGS == yes ]] || set -- --ssh "$@"
 [[ $FOUND_HOSTNAME_IN_ARGS == yes ]] || set -- --hostname="$TS_HOSTNAME" "$@"
+
+if [[ $DUMP_ARGS == yes ]]; then
+  printf 'hostname=%s\nssh=%s\ntun=%s\ncheck=%s\nargv=%s\n' \
+    "$TS_HOSTNAME" "$TS_SSH" "$TS_TUN" "$DO_CHECK" "$*"
+  exit 0
+fi
+
+# --check verifies and exits. It comes after the defaults so the dump above
+# can observe what --check would have used, and needs nothing from them.
+[[ $DO_CHECK == no ]] || run_check
 
 SETUPDIR="$(mktemp -d)"
 socket="${SETUPDIR}/tailscaled.sock"
