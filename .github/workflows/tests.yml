@@ -24,8 +24,8 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Findings from shellcheck are reported but do not fail the build; syntax
-      # errors do. See tests/01-lint.sh.
+      # Everything in this stage blocks, shellcheck findings included; see the
+      # header of tests/01-lint.sh.
       - name: Static checks
         run: ./tests/01-lint.sh
 

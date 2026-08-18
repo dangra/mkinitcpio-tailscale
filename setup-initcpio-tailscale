@@ -399,6 +399,16 @@ for arg in "$@"; do
     continue
   fi
 
+  # Only dash-prefixed tokens are candidate flags. A bare word can be the
+  # value of a pass-through flag written in its space-separated form --
+  # '--exit-node tun' -- and swallowing it as one of ours would eat the value
+  # and leave the flag dangling. Bare 'help' keeps working by name.
+  if [[ $arg != -* ]]; then
+    [[ $arg == help ]] && { usage; exit 0; }
+    TS_ARGS+=("$arg")
+    continue
+  fi
+
   # Matching is done with the leading dashes stripped: 'tailscale up' is a Go
   # flag parser and takes '-ssh' and '--ssh' alike, so this script does too.
   flag=${arg#-}

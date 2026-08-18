@@ -107,6 +107,11 @@ scan_is 'hostname=zzz-initrd ssh=yes tun= check=yes argv=--ssh --netfilter-mode=
 scan_is 'hostname=testbox-initrd ssh=yes tun= check=no argv=--hostname=testbox-initrd --ssh --netfilter-mode=on' -- --netfilter-mode=on
 scan_is 'hostname=testbox-initrd ssh=yes tun= check=no argv=--hostname=testbox-initrd --ssh --netfilter-mode=off --advertise-tags=tag:initrd' -- --advertise-tags=tag:initrd
 
+# A bare word that happens to spell one of this script's flags must survive
+# as the value of a pass-through flag, not be eaten as ours.
+scan_is 'hostname=testbox-initrd ssh=yes tun= check=no argv=--hostname=testbox-initrd --ssh --netfilter-mode=off --exit-node tun' -- --exit-node tun
+scan_is 'hostname=testbox-initrd ssh=yes tun= check=no argv=--hostname=testbox-initrd --ssh --netfilter-mode=off --advertise-tags check' -- --advertise-tags check
+
 # Rejections, each of which would otherwise surface much later.
 check_fails 'scan: --hostname without a value is refused' \
 	env HOSTNAME=testbox "$REPO_ROOT/setup-initcpio-tailscale" --internal-print-args --hostname
