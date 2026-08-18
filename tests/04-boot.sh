@@ -530,6 +530,11 @@ check 'sudo-pick: --check passes unprivileged' \
 	runuser -u "$ESC_USER" -- "$SETUP_HELPER" --check
 check 'doas-forced: --check passes unprivileged' \
 	runuser -u "$ESC_USER" -- env XSU=doas "$SETUP_HELPER" --check
+# The elevated re-exec must carry --hostname with it; without that the child
+# silently checks the machine's default name instead of the one asked for.
+check 'the unprivileged --check keeps an explicit --hostname' \
+	bash -c "runuser -u '$ESC_USER' -- '$SETUP_HELPER' --check --hostname=zzz-initrd 2>&1 |
+		grep -q zzz-initrd"
 [[ -f $WORK/mkinitcpio.conf.orig ]] &&
 	cp -a "$WORK/mkinitcpio.conf.orig" /etc/mkinitcpio.conf
 endgroup

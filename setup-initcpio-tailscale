@@ -35,7 +35,9 @@ Defaults:
 
 Instead of registering, '${CMD0} --check' verifies an existing setup without
 changing anything: configuration files present, 'tailscale' placed correctly
-in HOOKS=, and the built images actually carrying tailscaled.
+in HOOKS=, the built images actually carrying tailscaled, and the node's key
+not about to expire. Pass '--hostname' with it to check a node registered
+under a name other than the default.
 
 i.e.:
 
@@ -160,9 +162,12 @@ run_check() {
     local xsu self
     xsu=$(xsu_pick)
     self=$(readlink -f "$0" 2>/dev/null) || self=$0
-    # Unquoted on purpose: XSU may name a tool plus its arguments.
+    # --hostname travels with it: the deferral above exists so an explicit
+    # name reaches this check, and dropping it here would put the default
+    # back in the child. It is settled by now, so passing it is always right.
+    # Unquoted $xsu on purpose: XSU may name a tool plus its arguments.
     # shellcheck disable=SC2086
-    exec $xsu "$self" --check
+    exec $xsu "$self" --check --hostname="$TS_HOSTNAME"
   fi
 
   # The configuration the install hook will copy into the image.
