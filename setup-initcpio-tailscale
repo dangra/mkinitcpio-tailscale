@@ -152,7 +152,15 @@ effective_hooks() {
       # shellcheck source=/dev/null
       . "$f" 2>/dev/null
     done
-    printf '%s\n' ${HOOKS[@]+"${HOOKS[@]}"}
+    # HOOKS may be a plain string rather than an array -- Arch shipped that
+    # form for years and a .pacnew upgrade leaves it in place, and mkinitcpio
+    # accepts both (arrayize_config). Joining and re-splitting on spaces
+    # reads either the same way; hook names have no spaces to lose. Without
+    # it a scalar config looks like a single hook named
+    # "base udev ... filesystems" and nothing matches.
+    local -a split=()
+    IFS=' ' read -r -a split <<<"${HOOKS[*]:-}" || true
+    printf '%s\n' ${split[@]+"${split[@]}"}
   )
 }
 

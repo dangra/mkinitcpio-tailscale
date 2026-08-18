@@ -24,6 +24,9 @@ hook_enabled() {
 		if (
 			HOOKS=()
 			. "$f" 2>/dev/null
+			# A scalar HOOKS="..." is legal and common; mkinitcpio splits it
+			# in arrayize_config(). ${HOOKS[*]} happens to read the same
+			# either way, and saying so keeps this from looking accidental.
 			[[ " ${HOOKS[*]:-} " == *' tailscale '* ]]
 		); then
 			return 0

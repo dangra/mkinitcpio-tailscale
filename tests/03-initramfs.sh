@@ -495,6 +495,17 @@ printf 'HOOKS=(base systemd tailscale sd-encrypt filesystems)\n' \
 check 'I: a missing network hook is not fatal' run_doctor
 check 'I: but is warned about' grep -q 'WARN .*network hook' "$WORK/doctor.log"
 
+# HOOKS= as a plain string, which mkinitcpio accepts (arrayize_config) and
+# Arch shipped for years. Read as an array it is a single hook whose name is
+# the whole line, and --check would report a correct machine as misconfigured.
+printf 'HOOKS="base systemd sd-network tailscale sd-encrypt filesystems"\n' \
+	>/etc/mkinitcpio.conf
+check 'I: a scalar HOOKS= string is understood' run_doctor
+
+printf 'HOOKS="base systemd sd-network sd-encrypt filesystems"\n' \
+	>/etc/mkinitcpio.conf
+check_fails 'I: and a scalar HOOKS= without tailscale still fails' run_doctor
+
 printf 'HOOKS=(base systemd sd-network tailscale sd-encrypt filesystems)\n' \
 	>/etc/mkinitcpio.conf
 rm -rf "$TS_SETUPDIR"
