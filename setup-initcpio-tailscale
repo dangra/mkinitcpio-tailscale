@@ -80,7 +80,7 @@ xsu_pick() {
 install_state() {
   local setupdir=$1 ssh=$2 tun=$3
 
-  install -o root -g root -m600 -d "${TS_STATEDIR}"
+  install -o root -g root -m700 -d "${TS_STATEDIR}"
   install -o root -g root -m644 -t "${TS_STATEDIR}" "${setupdir}/tailscaled.state"
 
   # default.env is the user's to edit -- the setup output says to -- and

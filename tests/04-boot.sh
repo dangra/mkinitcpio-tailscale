@@ -507,7 +507,7 @@ esc_register() { # label extra-env node
 	check "$label: the state landed root-owned" \
 		test "$(stat -c %u "$TS_SETUPDIR/tailscaled.state" 2>/dev/null)" = 0
 	check "$label: the state directory is root-owned and private" \
-		test "$(stat -c %u:%a "$TS_SETUPDIR" 2>/dev/null)" = 0:600
+		test "$(stat -c %u:%a "$TS_SETUPDIR" 2>/dev/null)" = 0:700
 	check "$label: the node registered" node_known "$node"
 }
 
