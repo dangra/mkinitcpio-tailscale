@@ -540,6 +540,40 @@ post_upgrade 2.1.0 1.5.0 >/dev/null || true
 check_fails 'K: nothing is created where setup never ran' test -e "$TS_SETUPDIR/default.env"
 endgroup
 
+# --- variant L: --check notices a stale image -------------------------------
+# The pacman hook rebuilds when tailscale is upgraded, so an image older than
+# the installed daemon means that did not happen. The container has no /boot
+# images, so one built above stands in as one.
+group 'variant L: --check reports an image older than tailscaled'
+
+fixtures_write
+if build_image 'base systemd tailscale' >/dev/null 2>&1; then
+	snapshot
+	printf 'HOOKS=(base systemd sd-network tailscale sd-encrypt filesystems)\n' \
+		>/etc/mkinitcpio.conf
+	rm -rf /etc/mkinitcpio.conf.d
+	install -d /boot
+	cp "$IMG" /boot/initramfs-staletest.img
+
+	touch -d '2020-01-01' /boot/initramfs-staletest.img
+	bash "$REPO_ROOT/setup-initcpio-tailscale" --check >"$WORK/check.stale.log" 2>&1 || true
+	check 'L: an image older than tailscaled is reported' \
+		grep -q 'predates the installed tailscaled' "$WORK/check.stale.log"
+
+	touch /boot/initramfs-staletest.img
+	bash "$REPO_ROOT/setup-initcpio-tailscale" --check >"$WORK/check.fresh.log" 2>&1 || true
+	check_fails 'L: a current image is not' \
+		grep -q 'predates the installed tailscaled' "$WORK/check.fresh.log"
+	check 'L: and it is still recognised as carrying tailscaled' \
+		grep -q 'contains tailscaled' "$WORK/check.fresh.log"
+
+	rm -f /boot/initramfs-staletest.img
+	restore_conf
+else
+	fail 'L: mkinitcpio builds the image to stand in for /boot' "$(tail -20 "$LOG")"
+fi
+endgroup
+
 if ((TESTS_FAILED)) && [[ -n ${ARTIFACT_DIR:-} ]]; then
 	install -d "$ARTIFACT_DIR"
 	cp "$WORK"/build.*.log "$ARTIFACT_DIR/" 2>/dev/null || true

@@ -272,7 +272,9 @@ run_check() {
   # tools or images are not where this expects them. When TUN= asks for a
   # kernel device, the module has to be in the image too -- configured but not
   # rebuilt is exactly the silent break this mode can produce.
-  local img found=0 checked=0 list tun
+  local img found=0 checked=0 list tun tsbin
+  # What a rebuild would put in the image, for the staleness comparison below.
+  tsbin=$(command -v tailscaled 2>/dev/null || printf '')
   # The subshell keeps the sourcing contained, the same way the install hook
   # reads it at build time.
   # shellcheck source=/dev/null
@@ -285,6 +287,13 @@ run_check() {
       if grep -q 'tailscaled$' <<<"$list"; then
         found=1
         chk_ok "$img contains tailscaled"
+        # The pacman hook rebuilds when the tailscale package is upgraded, so
+        # an image older than the installed daemon means that never happened:
+        # the hook disabled, or a rebuild that failed. It still boots, with
+        # whatever the old tailscaled was missing.
+        if [[ -n $tsbin && $img -ot $tsbin ]]; then
+          chk_warn "$img predates the installed tailscaled, so it carries an older one; run 'mkinitcpio -P'"
+        fi
       else
         chk_warn "$img does not contain tailscaled (built before the hook was added?)"
       fi
