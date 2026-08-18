@@ -81,7 +81,10 @@ install_state() {
   local setupdir=$1 ssh=$2 tun=$3
 
   install -o root -g root -m700 -d "${TS_STATEDIR}"
-  install -o root -g root -m644 -t "${TS_STATEDIR}" "${setupdir}/tailscaled.state"
+  # 0600: the state file is the node key. The directory above already keeps
+  # everyone but root out, so this is the belt to that pair of braces -- it
+  # survives a loosened directory, a copy, or a backup that flattens modes.
+  install -o root -g root -m600 -t "${TS_STATEDIR}" "${setupdir}/tailscaled.state"
 
   # default.env is the user's to edit -- the setup output says to -- and
   # re-running this script (a new key, switching --ssh) is no reason to reset

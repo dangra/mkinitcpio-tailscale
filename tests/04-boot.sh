@@ -393,6 +393,8 @@ for sc in "${SCENARIOS[@]}"; do
 	fi
 
 	check "$sc: setup wrote tailscaled.state" test -s "$TS_SETUPDIR/tailscaled.state"
+	check "$sc: the node key is mode 600 on the host" \
+		test "$(stat -c %a "$TS_SETUPDIR/tailscaled.state" 2>/dev/null)" = 600
 	check "$sc: setup wrote default.env" test -s "$TS_SETUPDIR/default.env"
 	if [[ ${SC_SETUP_ARGS[$sc]} == *--no-ssh* ]]; then
 		check_fails "$sc: --no-ssh left no host keys" test -e "$TS_SETUPDIR/ssh"

@@ -64,7 +64,10 @@ fixtures_write() {
 	# be readable and non-empty, but using plausible content keeps failures legible.
 	printf '{"_machinekey":"privkey:%064d","_profiles":"[]"}\n' 1 >"$FIXTURE_SRC/tailscaled.state"
 	printf 'PORT="41641"\nFLAGS=""\n' >"$FIXTURE_SRC/default.env"
-	install -m644 -t "$TS_SETUPDIR" "$FIXTURE_SRC/tailscaled.state" "$FIXTURE_SRC/default.env"
+	# Same modes setup-initcpio-tailscale installs: the node key to root only,
+	# the settings file readable.
+	install -m600 -t "$TS_SETUPDIR" "$FIXTURE_SRC/tailscaled.state"
+	install -m644 -t "$TS_SETUPDIR" "$FIXTURE_SRC/default.env"
 
 	if ((with_ssh)); then
 		# ssh-keygen -A writes into <prefix>/etc/ssh and will not create it.
