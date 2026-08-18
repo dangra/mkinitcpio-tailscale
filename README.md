@@ -248,6 +248,35 @@ The test suite covers this end to end on both branches: it boots the image, logs
 in over Tailscale SSH from a second node on a throwaway tailnet, and checks the
 host key offered is the one `setup-initcpio-tailscale` generated.
 
+### Using headscale
+
+Nothing here assumes Tailscale's hosted control plane. Register against your
+own [headscale][hs] the way you would any node:
+
+```sh
+setup-initcpio-tailscale --login-server=https://headscale.example.net
+```
+
+or non-interactively with a pre-auth key:
+
+```sh
+setup-initcpio-tailscale --login-server=https://headscale.example.net \
+    --authkey=file:node.key
+```
+
+One Tailscale-ism to translate: key expiry is headscale's to manage, not the
+Tailscale admin console's, so the console URL in the setup output and in
+`--check`'s advice does not apply to you. `headscale nodes list` shows each
+node's expiry, and how it is set (and whether it applies at all) depends on
+your headscale version and configuration; the probe in `--check` reads the
+booted system's view of the tailnet and works against headscale all the same.
+
+Tailscale SSH needs an `ssh` policy in headscale's ACLs before the node
+accepts a session; the [Security considerations](#security-considerations)
+example below is valid headscale policy. This is not a theoretical
+combination: the test suite boots every scenario against a throwaway
+headscale, so the path you are on is the one CI exercises.
+
 ## Security considerations
 
 The Tailscale node key is stored in plaintext inside the initramfs. Initramfs is
@@ -386,6 +415,7 @@ AUR_REMOTE=/tmp/fake-aur.git ./scripts/aur-publish.sh --tag v1.2.0
 [gh3]: https://github.com/classabbyamp
 [gh4]: https://github.com/wolegis
 [aur]: https://aur.archlinux.org/packages/mkinitcpio-tailscale
+[hs]: https://headscale.net
 [releases]: https://github.com/dangra/mkinitcpio-tailscale/releases
 [extras]: https://aur.archlinux.org/packages/mkinitcpio-extras
 [sdextras]: https://aur.archlinux.org/packages/mkinitcpio-systemd-extras
