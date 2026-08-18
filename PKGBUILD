@@ -20,7 +20,7 @@ arch=("any")
 url="https://github.com/dangra/mkinitcpio-tailscale"
 license=("GPL-2.0-or-later")
 # tailscale is needed at image build time: the install hook refuses to build
-# without the package installed.
+# without tailscaled present.
 depends=("mkinitcpio" "tailscale")
 optdepends=("openssh: host key generation for the default Tailscale SSH setup"
   "jq: node key expiry checking in setup-initcpio-tailscale --check")

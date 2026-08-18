@@ -16,41 +16,34 @@ USE_INSTALLED=0
 need_root
 need_cmd mkinitcpio lsinitcpio depmod ssh-keygen
 
-# The install hook bails out unless the tailscale package is present.
-need_pkg tailscale
+# The install hook bails out unless tailscaled is on PATH.
+need_cmd tailscaled
 
 WORK=$(mktemp -d)
 BUILD_N=0
 
-# Simulating "tailscale is not installed" cannot be done with a PATH shim:
+# Simulating "tailscaled is not installed" cannot be done with a PATH shim:
 # mkinitcpio hard-resets PATH to /usr/bin:/bin at startup (mkinitcpio:39), so
-# the hook's `pacman -Qi tailscale` always finds the real binary. Swapping
-# /usr/bin/pacman itself is the only thing that works, which is safe here
-# because fixtures_init already refuses to run outside a container.
-PACMAN_SHIMMED=0
+# the hook's `command -v tailscaled` always finds the real binary. Moving
+# /usr/bin/tailscaled itself aside is the only thing that works, which is safe
+# here because fixtures_init already refuses to run outside a container.
+TAILSCALED_SHIMMED=0
 
-shim_pacman() {
-	mv /usr/bin/pacman /usr/bin/pacman.real || die 'could not move pacman aside'
-	cat >/usr/bin/pacman <<-'EOF'
-		#!/usr/bin/env bash
-		[[ $1 == -Qi && $2 == tailscale ]] && exit 1
-		exec /usr/bin/pacman.real "$@"
-	EOF
-	chmod 755 /usr/bin/pacman
-	PACMAN_SHIMMED=1
+shim_tailscaled() {
+	mv /usr/bin/tailscaled /usr/bin/tailscaled.hidden || die 'could not move tailscaled aside'
+	TAILSCALED_SHIMMED=1
 }
 
-unshim_pacman() {
-	((PACMAN_SHIMMED)) || return 0
-	rm -f /usr/bin/pacman
-	mv /usr/bin/pacman.real /usr/bin/pacman
-	PACMAN_SHIMMED=0
+unshim_tailscaled() {
+	((TAILSCALED_SHIMMED)) || return 0
+	mv /usr/bin/tailscaled.hidden /usr/bin/tailscaled
+	TAILSCALED_SHIMMED=0
 }
 
 # fixtures_init installs its own EXIT trap; chain ours so both run.
 cleanup_all() {
 	local rc=$?
-	unshim_pacman
+	unshim_tailscaled
 	rm -rf "$WORK"
 	fixtures_cleanup
 	return $rc
@@ -62,14 +55,26 @@ trap cleanup_all EXIT
 # --- kernel ---------------------------------------------------------------
 # The container's `uname -r` is the runner's kernel, for which no module tree
 # exists, so take the version from whichever tree a kernel package installed.
+# pkgbase marks Arch's kernel packages; Void's install a plain module tree,
+# which the kernel/ directory identifies.
 KVER=''
 for d in /usr/lib/modules/*/; do
-	[[ -f ${d}pkgbase ]] && KVER=$(basename "$d")
+	[[ -f ${d}pkgbase || -d ${d}kernel ]] && KVER=$(basename "$d")
 done
 [[ -n $KVER ]] || die 'no kernel module tree found; install the linux package'
 [[ -f /usr/lib/modules/$KVER/modules.dep ]] || depmod -a "$KVER" ||
 	die "depmod failed for $KVER"
 info "building against kernel $KVER"
+
+# A busybox-only distro (Void) can only build busybox images: mkinitcpio's
+# systemd install hook copies the host's systemd into the image, and there is
+# none. The systemd-specific variants are skipped there; everything that only
+# needs some working image builds against whichever init this host has.
+HAVE_SYSTEMD=0
+[[ -x /usr/lib/systemd/systemd && -f /usr/lib/initcpio/install/systemd ]] && HAVE_SYSTEMD=1
+ANY_INIT_HOOKS='base systemd tailscale'
+((HAVE_SYSTEMD)) || ANY_INIT_HOOKS='base udev tailscale'
+((HAVE_SYSTEMD)) || info 'no systemd on this host; skipping the systemd variants'
 
 # --- where mkinitcpio looks for the hook ----------------------------------
 MKI_HOOKDIR_ARGS=()
@@ -186,6 +191,7 @@ assert_common() {
 }
 
 # --- variant A: systemd ---------------------------------------------------
+if ((HAVE_SYSTEMD)); then
 group 'variant A: systemd initramfs'
 fixtures_write
 if build_image 'base systemd tailscale'; then
@@ -217,6 +223,7 @@ else
 	fail 'A: mkinitcpio builds' "$(tail -30 "$LOG")"
 fi
 endgroup
+fi
 
 # --- variant B: busybox ---------------------------------------------------
 group 'variant B: busybox initramfs'
@@ -258,6 +265,7 @@ fi
 endgroup
 
 # --- variant C: systemd with Tailscale SSH host keys ----------------------
+if ((HAVE_SYSTEMD)); then
 group 'variant C: systemd initramfs with ssh host keys'
 fixtures_write --ssh
 if build_image 'base systemd tailscale'; then
@@ -280,6 +288,7 @@ else
 	fail 'C: mkinitcpio builds' "$(tail -30 "$LOG")"
 fi
 endgroup
+fi
 
 # --- variant D: busybox with Tailscale SSH host keys ----------------------
 # The host keys are copied by the part of build() that runs before the init
@@ -330,14 +339,16 @@ group 'variant D2: kernel TUN opt-in'
 fixtures_write
 printf 'TUN="tailscale0"\n' >>"$FIXTURE_SRC/default.env"
 printf 'TUN="tailscale0"\n' >>"$TS_SETUPDIR/default.env"
-if build_image 'base systemd tailscale'; then
-	pass 'D2: systemd build with TUN=tailscale0'
-	snapshot
-	assert_common D2 tun
-	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/override.conf \
-		'^ExecStart=.* --tun=tailscale0 '
-else
-	fail 'D2: systemd build with TUN=tailscale0' "$(tail -30 "$LOG")"
+if ((HAVE_SYSTEMD)); then
+	if build_image 'base systemd tailscale'; then
+		pass 'D2: systemd build with TUN=tailscale0'
+		snapshot
+		assert_common D2 tun
+		img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/override.conf \
+			'^ExecStart=.* --tun=tailscale0 '
+	else
+		fail 'D2: systemd build with TUN=tailscale0' "$(tail -30 "$LOG")"
+	fi
 fi
 if build_image 'base udev tailscale'; then
 	pass 'D2: busybox build with TUN=tailscale0'
@@ -353,12 +364,12 @@ group 'variant D3: CLI="yes" puts the tailscale CLI back'
 fixtures_write
 printf 'CLI="yes"\n' >>"$FIXTURE_SRC/default.env"
 printf 'CLI="yes"\n' >>"$TS_SETUPDIR/default.env"
-if build_image 'base systemd tailscale'; then
-	pass 'D3: systemd build with CLI=yes'
+if build_image "$ANY_INIT_HOOKS"; then
+	pass 'D3: build with CLI=yes'
 	snapshot
 	assert_common D3 cli
 else
-	fail 'D3: systemd build with CLI=yes' "$(tail -30 "$LOG")"
+	fail 'D3: build with CLI=yes' "$(tail -30 "$LOG")"
 fi
 endgroup
 
@@ -375,7 +386,7 @@ group 'variants E-G: guard clauses reject bad configuration'
 # assert_guard <label> <error regex> — the build must be refused outright
 assert_guard() {
 	local label=$1 re=$2 rc=0
-	build_image 'base systemd tailscale' || rc=$?
+	build_image "$ANY_INIT_HOOKS" || rc=$?
 
 	check "$label: the hook reports the problem" grep -qE "$re" "$LOG"
 
@@ -406,9 +417,9 @@ rm -f "$TS_SETUPDIR/default.env"
 assert_guard 'F: missing default.env' 'default\.env'
 
 fixtures_write
-shim_pacman
-assert_guard 'G: tailscale package absent' 'tailscale not installed'
-unshim_pacman
+shim_tailscaled
+assert_guard 'G: tailscaled absent' 'tailscaled not found'
+unshim_tailscaled
 endgroup
 
 # --- the libalpm hook script -----------------------------------------------
@@ -538,6 +549,9 @@ endgroup
 # post_upgrade pins TUN="tailscale0" into an existing default.env exactly when
 # the old version predates 2.0.0 and the user has not chosen a TUN themselves,
 # preserving the kernel-TUN behaviour such machines were set up with.
+# The scriptlet is alpm's to run and compares versions with vercmp, which only
+# pacman ships; on other distros there is nothing to test.
+if command -v vercmp >/dev/null 2>&1; then
 group 'variant K: install scriptlet pins TUN across the 2.0.0 boundary'
 
 # shellcheck source=/dev/null
@@ -588,6 +602,9 @@ rm -rf "$TS_SETUPDIR"
 post_upgrade 2.1.0 1.5.0 >/dev/null || true
 check_fails 'K: nothing is created where setup never ran' test -e "$TS_SETUPDIR/default.env"
 endgroup
+else
+	info 'no vercmp on this host; skipping the install scriptlet variant'
+fi
 
 # --- variant L: --check notices a stale image -------------------------------
 # The pacman hook rebuilds when tailscale is upgraded, so an image older than
@@ -596,7 +613,7 @@ endgroup
 group 'variant L: --check reports an image older than tailscaled'
 
 fixtures_write
-if build_image 'base systemd tailscale' >/dev/null 2>&1; then
+if build_image "$ANY_INIT_HOOKS" >/dev/null 2>&1; then
 	snapshot
 	printf 'HOOKS=(base systemd sd-network tailscale sd-encrypt filesystems)\n' \
 		>/etc/mkinitcpio.conf
