@@ -546,6 +546,25 @@ post_upgrade 2.1.0 2.0.0 >/dev/null || true
 check_fails 'K: upgrades from 2.0.0 are not touched' \
 	grep -q '^TUN=' "$TS_SETUPDIR/default.env"
 
+# A default.env the user edited without a trailing newline: the pin must not
+# land on the last line, where it would source as one assignment and leave
+# TUN unset.
+fixtures_write
+printf 'PORT="41641"\nFLAGS=""' >"$TS_SETUPDIR/default.env"
+post_upgrade 2.1.0 1.5.0 >/dev/null || true
+check 'K: a file without a trailing newline still gets a TUN line' \
+	grep -qx 'TUN="tailscale0"' "$TS_SETUPDIR/default.env"
+check 'K: and the line before it survives intact' \
+	grep -qx 'FLAGS=""' "$TS_SETUPDIR/default.env"
+# Sourced in a subshell, the way the install hook and the runtime hook read it.
+tun_sourced_is() {
+	local want=$1 got
+	# shellcheck source=/dev/null
+	got=$(. "$TS_SETUPDIR/default.env" >/dev/null 2>&1; printf '%s' "${TUN:-}")
+	[[ $got == "$want" ]]
+}
+check 'K: sourcing it yields the pinned TUN' tun_sourced_is tailscale0
+
 rm -rf "$TS_SETUPDIR"
 post_upgrade 2.1.0 1.5.0 >/dev/null || true
 check_fails 'K: nothing is created where setup never ran' test -e "$TS_SETUPDIR/default.env"

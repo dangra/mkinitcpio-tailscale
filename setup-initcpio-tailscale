@@ -118,6 +118,11 @@ EOF
   if [[ -n $tun ]] && grep -q '^TUN=' "${TS_STATEDIR}/default.env"; then
     sed -i "s|^TUN=.*|TUN=\"${tun}\"|" "${TS_STATEDIR}/default.env"
   elif [[ -n $tun ]]; then
+    # An editor that left no final newline would otherwise glue this onto
+    # the last line: FLAGS=""TUN="tailscale0" sources as one assignment,
+    # leaving TUN unset and a stray argument on tailscaled's command line.
+    [[ -s ${TS_STATEDIR}/default.env && -z $(tail -c1 "${TS_STATEDIR}/default.env") ]] ||
+      printf '\n' >>"${TS_STATEDIR}/default.env"
     printf 'TUN="%s"\n' "$tun" >>"${TS_STATEDIR}/default.env"
   fi
 
