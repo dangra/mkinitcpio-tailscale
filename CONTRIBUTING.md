@@ -48,14 +48,35 @@ hooks must parse under busybox ash, and the README uses no em dashes.
 ## Releases
 
 Push an annotated tag and CI does the rest, in order: full suite, publish
-to the AUR, GitHub release with the built package attached.
+to the AUR, GitHub release with the built package attached. The tag is the
+only source of truth for the version:
+
+| Tag        | Publishes |
+| ---------- | --------- |
+| `v1.2.0`   | `1.2.0-1` |
+| `v1.2.0-2` | `1.2.0-2` |
 
 ```sh
 git tag -a v1.2.3 -m "Release 1.2.3" && git push origin v1.2.3
 ```
 
+Use `v<version>-<rel>` for a packaging-only rebuild of a version already
+published. Only packaging files reach the AUR, never `tests/` or
+`.github/`.
+
 Every push and pull request runs the same publish path in dry-run mode
 against the live AUR, so the release machinery cannot rot between releases.
+To rehearse it locally:
+
+```sh
+# against the real AUR, read-only (clones anonymously over HTTPS)
+AUR_REMOTE=https://aur.archlinux.org/mkinitcpio-tailscale.git \
+  ./scripts/aur-publish.sh --dry-run --tag v1.2.0
+
+# or against a scratch repo, including the push
+git init --bare /tmp/fake-aur.git
+AUR_REMOTE=/tmp/fake-aur.git ./scripts/aur-publish.sh --tag v1.2.0
+```
 A daily canary reruns the suite when a dependency the image cares about is
 updated in Arch, and files an issue when that breaks something.
 
