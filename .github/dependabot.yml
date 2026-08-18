@@ -1,0 +1,12 @@
+# The workflows pin actions by commit SHA (they hold the AUR push key, so a
+# floating tag was a supply-chain liability), which trades silent updates for
+# silent rot. This is the other half of that trade: a PR whenever a pinned
+# action publishes a release, so the pins move deliberately and visibly. The
+# PR runs the full test suite like any other, and the version comment beside
+# each SHA keeps the diff readable.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
