@@ -142,5 +142,18 @@ git -C "$CLONE" -c user.name="$AUTHOR_NAME" -c user.email="$AUTHOR_EMAIL" \
 	commit --quiet -m "Update to ${NEW_VER}-${NEW_REL}"
 
 # Never force: if the AUR has moved underneath us, fail rather than overwrite.
-git -C "$CLONE" push --quiet origin HEAD:master
+# The AUR rate-limits SSH connections aggressively at times, and the clone
+# above already spent one; a push dropped with "Connection closed" seconds
+# later is its throttle, not a real failure. Backing off and retrying is
+# the polite response, same as the headscale download's --retry.
+push_ok=0
+for delay in 0 15 45 90; do
+	sleep "$delay"
+	if git -C "$CLONE" push --quiet origin HEAD:master; then
+		push_ok=1
+		break
+	fi
+	info "push failed; retrying after a backoff"
+done
+((push_ok)) || die "could not push to $AUR_REMOTE after several attempts"
 info "pushed ${NEW_VER}-${NEW_REL} to $AUR_REMOTE"
