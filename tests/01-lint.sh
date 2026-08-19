@@ -25,9 +25,10 @@ command -v shellcheck >/dev/null 2>&1 ||
 # directive in each test script lets shellcheck see lib.sh and fixtures.sh.
 sc_out=$(shellcheck -x "${SCRIPTS[@]}" "${TEST_SCRIPTS[@]}" 2>&1) && sc_rc=0 || sc_rc=$?
 
-# SC2034/SC2154 are structural in a PKGBUILD: makepkg assigns and consumes
-# these, so shellcheck cannot see either end of them.
-pkg_out=$(shellcheck --shell=bash --exclude=SC2034,SC2154 PKGBUILD 2>&1) && pkg_rc=0 || pkg_rc=$?
+# SC2034/SC2154 are structural in a PKGBUILD and an xbps-src template alike:
+# makepkg and xbps-src assign and consume these, so shellcheck cannot see
+# either end of them.
+pkg_out=$(shellcheck --shell=bash --exclude=SC2034,SC2154 PKGBUILD contrib/void/template 2>&1) && pkg_rc=0 || pkg_rc=$?
 
 if ((sc_rc == 0 && pkg_rc == 0)); then
 	pass 'shellcheck reports no findings'
@@ -45,7 +46,7 @@ fi
 endgroup
 
 group 'bash syntax'
-for f in "${SCRIPTS[@]}" PKGBUILD "${TEST_SCRIPTS[@]}"; do
+for f in "${SCRIPTS[@]}" PKGBUILD contrib/void/template "${TEST_SCRIPTS[@]}"; do
 	check "$f parses as bash" bash -n "$f"
 done
 endgroup

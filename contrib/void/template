@@ -1,0 +1,38 @@
+# Template file for 'initcpio-tailscale'
+#
+# The upstream project is named mkinitcpio-tailscale, but Void's official
+# repos already carry a different, leaner hook under that name (classabbyamp's,
+# credited in the README as prior work), so this template takes the name this
+# repo's own files carry: initcpio-tailscale, as in setup-initcpio-tailscale
+# and initcpio-hooks-tailscale.
+#
+# It is offered for building locally with xbps-src, not submitted to
+# void-packages; see docs/void-port.md for the coexist stance. To build, copy
+# this directory to srcpkgs/initcpio-tailscale in a void-packages checkout and
+# run ./xbps-src pkg initcpio-tailscale.
+#
+# openssh (ssh-keygen) is needed by the default setup path, which generates
+# SSH host keys for Tailscale SSH, and jq by the key-expiry probe of
+# setup-initcpio-tailscale --check; both fail cleanly with instructions when
+# absent, so neither is a hard dependency. XBPS has no transaction hooks, so
+# unlike the Arch package nothing rebuilds the initramfs when tailscale is
+# upgraded: run mkinitcpio -P yourself afterwards.
+pkgname=initcpio-tailscale
+version=2.5.0
+revision=1
+depends="mkinitcpio tailscale"
+short_desc="Tailscale in the initramfs, with setup helper and Tailscale SSH"
+maintainer="Daniel Graña <dangra@gmail.com>"
+license="GPL-2.0-or-later"
+homepage="https://github.com/dangra/mkinitcpio-tailscale"
+distfiles="https://github.com/dangra/mkinitcpio-tailscale/archive/refs/tags/v${version}.tar.gz"
+checksum=96b9fc3aa5504fab5aa7365f06d30fee2783278456ffefeb8e1387c12800cffe
+# Both packages install /usr/lib/initcpio/{install,hooks}/tailscale: the hook
+# is named 'tailscale' in HOOKS= either way, so only one can be present.
+conflicts="mkinitcpio-tailscale>=0"
+
+do_install() {
+	vinstall initcpio-install-tailscale 644 usr/lib/initcpio/install tailscale
+	vinstall initcpio-hooks-tailscale 644 usr/lib/initcpio/hooks tailscale
+	vbin setup-initcpio-tailscale
+}
