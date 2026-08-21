@@ -100,56 +100,6 @@ jobs:
           path: logs/
           if-no-files-found: ignore
 
-  initramfs-void:
-    name: initramfs (void)
-    runs-on: ubuntu-latest
-    container: ghcr.io/void-linux/void-glibc:latest
-    timeout-minutes: 30
-    steps:
-      # The same static checks and image builds as the two jobs above, on the
-      # other distro that runs this hook: Void's mkinitcpio, no systemd, so
-      # tests/03-initramfs.sh exercises its busybox variants only. Keep the
-      # bootstrap in step with the void lane of tests/container.sh.
-      - name: Bootstrap
-        run: |
-          # The container image slims itself with noextract rules that also
-          # strip files mkinitcpio needs at image build time, the udev
-          # helpers among them. Drop the rules before anything installs, and
-          # reinstall the two packages whose payloads the image was built
-          # without, so the container looks like a real Void system where it
-          # matters. findutils, diffutils and kbd likewise: mkinitcpio builds
-          # images with find, the keymap and consolefont hooks run loadkeys
-          # and setfont, and the tests byte-compare with cmp and diff.
-          rm -f /etc/xbps.d/noextract*.conf
-          xbps-install -Syu xbps
-          xbps-install -yu
-          # git has to be installed before actions/checkout, otherwise it
-          # falls back to downloading a REST tarball; libstdc++ is for the
-          # runner's node, which actions run on.
-          xbps-install -y git bash libstdc++ findutils diffutils kbd shellcheck mkinitcpio tailscale openssh
-          xbps-install -yf eudev libkmod
-          # Installing a kernel runs the /etc/kernel.d hooks, and mkinitcpio's
-          # would build an initramfs against the stock preset, which cannot
-          # work in a container. A /dev/null symlink is not executable, so the
-          # kernel trigger skips it; the tests build their images with their
-          # own configuration.
-          ln -sf /dev/null /etc/kernel.d/post-install/20-initramfs
-          xbps-install -y linux
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Static checks and image contents with Void's mkinitcpio
-        run: ./tests/run.sh 01 03
-        env:
-          ARTIFACT_DIR: ${{ github.workspace }}/logs
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: failure()
-        with:
-          name: initramfs-void-logs
-          path: logs/
-          if-no-files-found: ignore
-
   boot:
     name: boot
     runs-on: ubuntu-latest
