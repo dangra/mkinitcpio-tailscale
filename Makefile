@@ -2,7 +2,7 @@
 STAGEDIR ?= .stage
 TAG ?=
 
-.PHONY: stage build install publish test test-all test-void clean
+.PHONY: stage build install publish test test-all clean
 
 
 # PKGBUILD in this repo is a template: pkgver, pkgrel and sha256sums are
@@ -33,11 +33,6 @@ test:
 # Adds the QEMU boot test against a throwaway headscale server.
 test-all:
 	./tests/container.sh all
-
-# The lint and image-contents stages again, in a throwaway Void Linux
-# container: no systemd, Void's mkinitcpio. See docs/void-port.md.
-test-void:
-	./tests/container.sh void
 
 clean:
 	rm -rf "$(STAGEDIR)"
