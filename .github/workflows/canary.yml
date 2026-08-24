@@ -119,8 +119,8 @@ jobs:
           VERSIONS: ${{ needs.gate.outputs.versions }}
         run: |
           if [ -z "$VERSIONS" ]; then
-            echo '::warning::gate produced no version set; nothing recorded'
-            exit 0
+            echo '::error::gate produced no version set on a scheduled run'
+            exit 1
           fi
           printf '%s\n' "$VERSIONS" >versions
           echo "recording: $VERSIONS"
@@ -129,7 +129,7 @@ jobs:
         with:
           name: canary-baseline
           path: versions
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 90
 
   # When a canary run fails, file the failure where it will be seen.
