@@ -28,11 +28,14 @@ jobs:
   # suite exercises moved since the set the record job stored, the day's run
   # stops here at a few seconds' cost. A manual dispatch of this workflow
   # skips the comparison -- that is the retry lever when a gated day needs a
-  # second look. Fail-open by design: a missing baseline, an unreachable
-  # archlinux.org, or a package the query cannot resolve all count as changed.
+  # second look. Fail-open by design: a missing or expired baseline, an
+  # unreachable archlinux.org, or a package the query cannot resolve all
+  # count as changed.
   gate:
     name: gate
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
     timeout-minutes: 5
     outputs:
       changed: ${{ steps.cmp.outputs.changed }}
@@ -41,7 +44,8 @@ jobs:
       - name: Compare dependency versions with the last tested set
         id: cmp
         env:
-          LAST: ${{ vars.CANARY_PKGS }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           if [ "$GITHUB_EVENT_NAME" != schedule ]; then
             echo 'changed=true' >>"$GITHUB_OUTPUT"
@@ -59,13 +63,31 @@ jobs:
               echo "$p=unknown"
           done | LC_ALL=C sort | paste -sd' ')
           echo "versions=$versions" >>"$GITHUB_OUTPUT"
-          if [ -n "$LAST" ] && [ "$versions" = "$LAST" ] && ! grep -q unknown <<<"$versions"; then
+          # The baseline is the canary-baseline artifact from the newest
+          # scheduled run that uploaded one. Gated runs upload nothing, so
+          # walk back past them. Failed runs count: the record job stores
+          # whatever set it tested, pass or fail, which is what keeps a
+          # broken dependency set from re-failing -- and re-commenting on
+          # the canary issue -- every day until something actually moves.
+          last=''
+          for id in $(gh api \
+              "repos/$GH_REPO/actions/workflows/canary.yml/runs?event=schedule&per_page=50" \
+              --jq '.workflow_runs[].id' || true); do
+            [ "$id" = "$GITHUB_RUN_ID" ] && continue
+            if gh run download "$id" --repo "$GH_REPO" --name canary-baseline \
+                --dir "$RUNNER_TEMP/baseline" 2>/dev/null; then
+              last=$(cat "$RUNNER_TEMP/baseline/versions")
+              echo "baseline from run $id"
+              break
+            fi
+          done
+          if [ -n "$last" ] && [ "$versions" = "$last" ] && ! grep -q unknown <<<"$versions"; then
             echo "no dependency moved since the last tested set:"
             echo "  $versions"
             echo 'changed=false' >>"$GITHUB_OUTPUT"
           else
             echo "dependencies changed, or no clean baseline:"
-            echo "  last:    ${LAST:-<none>}"
+            echo "  last:    ${last:-<none>}"
             echo "  current: $versions"
             echo 'changed=true' >>"$GITHUB_OUTPUT"
           fi
@@ -77,38 +99,38 @@ jobs:
     uses: ./.github/workflows/tests.yml
 
   # The other half of the gate: remember which dependency set was tested, so
-  # tomorrow's gate has something to compare against. Recorded even when the
-  # suite fails -- the failure is already filed by canary-issue, and re-running
-  # the same versions every day would only re-fail; workflow_dispatch bypasses
-  # the gate when a retry is wanted. Failures here only warn: a stale baseline
-  # degrades to testing more often, never less.
+  # tomorrow's gate has something to compare against. The baseline travels as
+  # a run artifact because the workflow token cannot write repository
+  # variables -- the variables API answers 403 to it, permissions block or
+  # not, and until Aug 2026 this job warned about that daily while showing
+  # green. Recorded even when the suite fails -- the failure is already filed
+  # by canary-issue, and re-running the same versions every day would only
+  # re-fail; workflow_dispatch bypasses the gate when a retry is wanted. A
+  # lost or expired baseline degrades to testing more often, never less.
   record:
     name: record
     if: github.event_name == 'schedule' && needs.gate.outputs.changed == 'true' && !cancelled()
     needs: [gate, tests]
     runs-on: ubuntu-latest
-    permissions:
-      actions: write
     timeout-minutes: 5
     steps:
-      - name: Record the tested versions
+      - name: Write the tested versions
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
           VERSIONS: ${{ needs.gate.outputs.versions }}
         run: |
           if [ -z "$VERSIONS" ]; then
             echo '::warning::gate produced no version set; nothing recorded'
             exit 0
           fi
-          if ! gh api -X PATCH "repos/$GH_REPO/actions/variables/CANARY_PKGS" \
-              -f name=CANARY_PKGS -f value="$VERSIONS" 2>/dev/null &&
-             ! gh api -X POST "repos/$GH_REPO/actions/variables" \
-              -f name=CANARY_PKGS -f value="$VERSIONS" 2>/dev/null; then
-            echo '::warning::could not update CANARY_PKGS; the next scheduled run will test again'
-            exit 0
-          fi
-          echo "recorded: $VERSIONS"
+          printf '%s\n' "$VERSIONS" >versions
+          echo "recording: $VERSIONS"
+      - name: Upload the baseline artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: canary-baseline
+          path: versions
+          if-no-files-found: warn
+          retention-days: 90
 
   # When a canary run fails, file the failure where it will be seen.
   # Scheduled-run failure emails go only to whoever last touched the cron line
