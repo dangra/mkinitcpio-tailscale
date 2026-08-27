@@ -101,13 +101,17 @@ fixtures_write() {
 	install -m644 -t "$TS_SETUPDIR" "$FIXTURE_SRC/default.env"
 
 	if ((with_ssh)); then
-		# ssh-keygen -A writes into <prefix>/etc/ssh and will not create it.
-		install -dm700 "$FIXTURE_SRC/ssh" "$FIXTURE_SRC/etc/ssh"
-		ssh-keygen -q -A -f "$FIXTURE_SRC" >/dev/null
-		mv "$FIXTURE_SRC"/etc/ssh/ssh_host_* "$FIXTURE_SRC/ssh/"
-		rm -rf "${FIXTURE_SRC:?}/etc"
+		# The same three keys the setup helper's tailscaled generates, in the
+		# same PKCS#8 PEM format (ssh/tailssh/hostkeys.go upstream), private
+		# halves only: tailscaled derives the public keys itself.
+		install -dm700 "$FIXTURE_SRC/ssh"
+		openssl genpkey -quiet -algorithm ed25519 \
+			-out "$FIXTURE_SRC/ssh/ssh_host_ed25519_key"
+		openssl genpkey -quiet -algorithm EC -pkeyopt ec_paramgen_curve:P-256 \
+			-out "$FIXTURE_SRC/ssh/ssh_host_ecdsa_key"
+		openssl genpkey -quiet -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+			-out "$FIXTURE_SRC/ssh/ssh_host_rsa_key"
 		install -dm700 "$TS_SETUPDIR/ssh"
 		install -m600 -t "$TS_SETUPDIR/ssh" "$FIXTURE_SRC/ssh/"ssh_host_*_key
-		install -m644 -t "$TS_SETUPDIR/ssh" "$FIXTURE_SRC/ssh/"ssh_host_*_key.pub
 	fi
 }
