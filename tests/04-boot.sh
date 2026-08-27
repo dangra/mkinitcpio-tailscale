@@ -395,6 +395,11 @@ node_ip() {
 # sessions of the later scenarios expire while the first one boots rather than
 # stalling each boot in turn.
 group 'setup-initcpio-tailscale against headscale'
+# A deliberate trap for the setup helper's privilege drop: give this host a
+# real /etc/ssh identity. A tailscaled running as root prefers these keys over
+# generating its own, so if the helper ever runs its daemon privileged again,
+# the identity assertion below sees the borrowed key instead of a fresh one.
+[[ -s /etc/ssh/ssh_host_ed25519_key ]] || ssh-keygen -q -A
 for sc in "${SCENARIOS[@]}"; do
 	node="${TS_NODE_NAME}-${SC_SUFFIX[$sc]}"
 
@@ -425,8 +430,26 @@ for sc in "${SCENARIOS[@]}"; do
 			test -s "$TS_SETUPDIR/ssh/ssh_host_ed25519_key"
 		check "$sc: the private host key is mode 600" \
 			test "$(stat -c %a "$TS_SETUPDIR/ssh/ssh_host_ed25519_key" 2>/dev/null)" = 600
-		# What the ssh assertions later compare the offered host key against.
-		cp "$TS_SETUPDIR/ssh/ssh_host_ed25519_key.pub" "$WORK/hostkey.$sc.pub"
+		# tailscaled writes PKCS#8 PEM; ssh-keygen would have left an OPENSSH
+		# block instead, so the header doubles as a provenance check.
+		check "$sc: the host key is tailscaled-generated PKCS#8" \
+			grep -q -- '-----BEGIN PRIVATE KEY-----' "$TS_SETUPDIR/ssh/ssh_host_ed25519_key"
+		# The setup dir carries private keys only; the public half, derived
+		# here, is what the ssh assertions later compare the offered host key
+		# against.
+		if ssh-keygen -y -f "$TS_SETUPDIR/ssh/ssh_host_ed25519_key" \
+			>"$WORK/hostkey.$sc.pub" 2>"$WORK/derive.$sc.log" &&
+			[[ -s $WORK/hostkey.$sc.pub ]]; then
+			pass "$sc: the public host key derives from the private key"
+		else
+			fail "$sc: the public host key derives from the private key" \
+				"$(cat "$WORK/derive.$sc.log")"
+		fi
+		# The daemon runs unprivileged exactly so it cannot adopt the /etc/ssh
+		# identity planted above the loop.
+		check "$sc: the host key is not this machine's /etc/ssh identity" \
+			test "$(awk '{print $1, $2}' "$WORK/hostkey.$sc.pub")" != \
+			"$(awk '{print $1, $2}' /etc/ssh/ssh_host_ed25519_key.pub)"
 	fi
 	if [[ ${SC_SETUP_ARGS[$sc]} == *--tun* ]]; then
 		check "$sc: default.env carries TUN=tailscale0" \

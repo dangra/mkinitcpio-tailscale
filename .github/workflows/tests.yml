@@ -79,7 +79,7 @@ jobs:
           # mkinitcpio is named explicitly because linux depends on the virtual
           # "initramfs" provider and --noconfirm could otherwise pick dracut.
           pacman -Syu --noconfirm --needed \
-            git mkinitcpio linux tailscale openssh
+            git mkinitcpio linux tailscale
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

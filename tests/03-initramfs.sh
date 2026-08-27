@@ -14,7 +14,7 @@ USE_INSTALLED=0
 [[ ${1:-} == --installed ]] && USE_INSTALLED=1
 
 need_root
-need_cmd mkinitcpio lsinitcpio depmod ssh-keygen
+need_cmd mkinitcpio lsinitcpio depmod openssl
 
 # The install hook copies tailscaled into every image it builds.
 need_cmd tailscaled
@@ -259,7 +259,7 @@ if build_image 'base systemd tailscale'; then
 	assert_common C
 
 	img_has "$ROOT" var/lib/tailscale/ssh/ssh_host_ed25519_key
-	img_has "$ROOT" var/lib/tailscale/ssh/ssh_host_ed25519_key.pub
+	img_has "$ROOT" var/lib/tailscale/ssh/ssh_host_ecdsa_key
 	img_has "$ROOT" var/lib/tailscale/ssh/ssh_host_rsa_key
 	img_same "$ROOT" var/lib/tailscale/ssh/ssh_host_ed25519_key \
 		"$FIXTURE_SRC/ssh/ssh_host_ed25519_key"
@@ -286,7 +286,7 @@ if build_image 'base udev tailscale'; then
 
 	img_has "$ROOT" hooks/tailscale
 	img_has "$ROOT" var/lib/tailscale/ssh/ssh_host_ed25519_key
-	img_has "$ROOT" var/lib/tailscale/ssh/ssh_host_ed25519_key.pub
+	img_has "$ROOT" var/lib/tailscale/ssh/ssh_host_ecdsa_key
 	img_has "$ROOT" var/lib/tailscale/ssh/ssh_host_rsa_key
 	img_same "$ROOT" var/lib/tailscale/ssh/ssh_host_ed25519_key \
 		"$FIXTURE_SRC/ssh/ssh_host_ed25519_key"
