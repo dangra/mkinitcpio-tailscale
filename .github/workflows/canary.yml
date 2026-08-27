@@ -53,10 +53,13 @@ jobs:
             echo "manual dispatch; testing unconditionally"
             exit 0
           fi
-          # The packages that end up in or build the image, plus the ssh
-          # tooling. Test-only infrastructure (qemu, headscale, jq) is
-          # deliberately absent: an update there cannot break users.
-          pkgs='tailscale mkinitcpio linux systemd busybox openssh'
+          # The packages that end up in or build the image, plus the two the
+          # setup and login paths lean on: openssh as the client users reach
+          # their initrd with, util-linux for the setpriv that drops the setup
+          # daemon's privileges. Test-only infrastructure (qemu, headscale,
+          # jq, openssl) is deliberately absent: an update there cannot break
+          # users.
+          pkgs='tailscale mkinitcpio linux systemd busybox openssh util-linux'
           versions=$(for p in $pkgs; do
             curl -fsS --max-time 15 "https://archlinux.org/packages/search/json/?name=$p" |
               jq -r --arg p "$p" '.results[0] | "\($p)=\(.pkgver)-\(.pkgrel)"' ||
@@ -161,9 +164,10 @@ jobs:
             exit 0
           fi
           gh issue create --title "$title" --body "$(cat <<EOF
-          The scheduled CI run failed with no commit behind it, which means an
-          update of a dependency -- tailscale, mkinitcpio, linux or openssh --
-          broke the hook. Users installing or rebuilding today are likely
+          The scheduled CI run failed with no commit behind it, which means a
+          package update -- tailscale, mkinitcpio, linux, or another package
+          the suite exercises -- broke the hook, the setup helper, or the ssh
+          login path. Users installing or rebuilding today are likely
           affected.
 
           Failed run: $RUN_URL
