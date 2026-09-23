@@ -407,8 +407,13 @@ for sc in "${SCENARIOS[@]}"; do
 	# key assertions below are what prove the default took effect; the dropbear
 	# scenario registers --no-ssh instead, via SC_SETUP_ARGS.
 	rm -rf "$TS_SETUPDIR"
+	# A private TMPDIR, so the helper's scratch directory -- which holds the
+	# node key while it works -- can be seen to be gone afterwards. Under /tmp
+	# and 0755 because the daemon inside runs as nobody and has to reach it.
+	setup_tmp=$(mktemp -d /tmp/setup-tmp.XXXXXX)
+	chmod 755 "$setup_tmp"
 	# shellcheck disable=SC2086 # SC_SETUP_ARGS is meant to word-split
-	if "$SETUP_HELPER" \
+	if TMPDIR="$setup_tmp" "$SETUP_HELPER" \
 		--hostname="$node" \
 		--login-server="$SERVER_URL" \
 		--authkey="$AUTHKEY" ${SC_SETUP_ARGS[$sc]} >"$WORK/setup.$sc.log" 2>&1; then
@@ -418,6 +423,12 @@ for sc in "${SCENARIOS[@]}"; do
 		summary
 		exit 1
 	fi
+
+	check "$sc: setup left no scratch directory behind" \
+		test -z "$(ls -A "$setup_tmp")"
+	check_fails "$sc: setup left no tailscaled running" \
+		pgrep -f -- "-statedir=$setup_tmp/"
+	rm -rf "$setup_tmp"
 
 	check "$sc: setup wrote tailscaled.state" test -s "$TS_SETUPDIR/tailscaled.state"
 	check "$sc: the node key is mode 600 on the host" \

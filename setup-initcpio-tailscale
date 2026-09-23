@@ -365,11 +365,15 @@ cleanup() {
   # Whatever brought us here, on the way out. Exiting 0 unconditionally, as this
   # used to, reported every failure -- die() included -- as a successful setup.
   local rc=$?
-  if [[ -n "${SETUPDIR:-}" ]]; then
-    rm -rf "${SETUPDIR}"
-  fi
+  # The daemon goes first, and is waited for: removing the directory under a
+  # live tailscaled races its writes, and a file it creates mid-removal
+  # leaves the directory, node key included, behind in /tmp.
   if [[ -n "$PID" ]]; then
     kill "$PID" 2>/dev/null || true
+    wait "$PID" 2>/dev/null || true
+  fi
+  if [[ -n "${SETUPDIR:-}" ]]; then
+    rm -rf "${SETUPDIR}"
   fi
   exit "$rc"
 }
@@ -471,6 +475,12 @@ for arg in "$@"; do
     TS_TUN=${flag#*=}
     TS_TUN=${TS_TUN//[\"\']/}
     [[ -n $TS_TUN ]] || die "--tun= needs an interface name"
+    # The name lands in a sed replacement and in default.env, which root
+    # sources on every image build, so anything beyond a kernel interface
+    # name (IFNAMSIZ-1 characters) or tailscaled's own keyword is refused
+    # here rather than breaking the install half way or running as code.
+    [[ $TS_TUN =~ ^[A-Za-z0-9_.-]{1,15}$ || $TS_TUN == userspace-networking ]] ||
+      die "--tun=${TS_TUN} is not a valid interface name"
     continue
     ;;
   ssh | ssh=*)

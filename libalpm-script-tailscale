@@ -35,7 +35,9 @@ hook_enabled() {
 
 hook_enabled || exit 0
 
-if ! [[ -s /etc/initcpio/tailscale/tailscaled.state ]]; then
+# The same two files the install hook refuses to build without; checking
+# fewer would let a half-configured setup fail the rebuild after all.
+if ! [[ -s /etc/initcpio/tailscale/tailscaled.state && -s /etc/initcpio/tailscale/default.env ]]; then
 	echo "tailscale is in HOOKS= but /etc/initcpio/tailscale is not set up; not rebuilding the initramfs"
 	echo "run setup-initcpio-tailscale, then mkinitcpio -P"
 	exit 0
