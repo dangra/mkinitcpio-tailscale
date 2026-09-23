@@ -365,11 +365,15 @@ cleanup() {
   # Whatever brought us here, on the way out. Exiting 0 unconditionally, as this
   # used to, reported every failure -- die() included -- as a successful setup.
   local rc=$?
-  if [[ -n "${SETUPDIR:-}" ]]; then
-    rm -rf "${SETUPDIR}"
-  fi
+  # The daemon goes first, and is waited for: removing the directory under a
+  # live tailscaled races its writes, and a file it creates mid-removal
+  # leaves the directory, node key included, behind in /tmp.
   if [[ -n "$PID" ]]; then
     kill "$PID" 2>/dev/null || true
+    wait "$PID" 2>/dev/null || true
+  fi
+  if [[ -n "${SETUPDIR:-}" ]]; then
+    rm -rf "${SETUPDIR}"
   fi
   exit "$rc"
 }
