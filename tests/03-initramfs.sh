@@ -465,6 +465,12 @@ check_fails 'H: no rebuild when not configured' test -s "$ALPM_CALLS"
 check 'H: tells the user what to run instead' \
 	grep -q 'setup-initcpio-tailscale' "$WORK/alpm-out.log"
 
+# default.env is required by the install hook just as much as the key.
+fixtures_write
+rm -f "$TS_SETUPDIR/default.env"
+check 'H: exits 0 when default.env is missing' run_alpm
+check_fails 'H: no rebuild when default.env is missing' test -s "$ALPM_CALLS"
+
 fixtures_write
 check 'H: exits 0 when enabled and configured' run_alpm
 check 'H: rebuilds every preset' grep -qx -- '-P' "$ALPM_CALLS"
