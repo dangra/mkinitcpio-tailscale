@@ -100,6 +100,7 @@ scan_is 'hostname=other-initrd ssh=yes tun= check=no argv=--ssh --netfilter-mode
 # The kernel TUN opt-in, defaulted and named.
 scan_is 'hostname=testbox-initrd ssh=yes tun=tailscale0 check=no argv=--hostname=testbox-initrd --ssh --netfilter-mode=off' -- --tun
 scan_is 'hostname=testbox-initrd ssh=yes tun=ts9 check=no argv=--hostname=testbox-initrd --ssh --netfilter-mode=off' -- --tun=ts9
+scan_is 'hostname=testbox-initrd ssh=yes tun=userspace-networking check=no argv=--hostname=testbox-initrd --ssh --netfilter-mode=off' -- --tun=userspace-networking
 # --check is deferred to the end of the scan, so a later --hostname reaches it.
 scan_is 'hostname=zzz-initrd ssh=yes tun= check=yes argv=--ssh --netfilter-mode=off --hostname=zzz-initrd' -- --check --hostname=zzz-initrd
 # An explicit netfilter mode wins over the injected default, and unknown flags
@@ -117,6 +118,13 @@ check_fails 'scan: --hostname without a value is refused' \
 	env HOSTNAME=testbox "$REPO_ROOT/setup-initcpio-tailscale" --internal-print-args --hostname
 check_fails 'scan: --tun= without a name is refused' \
 	env HOSTNAME=testbox "$REPO_ROOT/setup-initcpio-tailscale" --internal-print-args --tun=
+check_fails 'scan: --tun= with a sed delimiter is refused' \
+	env HOSTNAME=testbox "$REPO_ROOT/setup-initcpio-tailscale" --internal-print-args '--tun=a|b'
+# shellcheck disable=SC2016 # literal on purpose: it must reach the scan unexpanded
+check_fails 'scan: --tun= with shell syntax is refused' \
+	env HOSTNAME=testbox "$REPO_ROOT/setup-initcpio-tailscale" --internal-print-args '--tun=x$(id)'
+check_fails 'scan: --tun= longer than IFNAMSIZ is refused' \
+	env HOSTNAME=testbox "$REPO_ROOT/setup-initcpio-tailscale" --internal-print-args --tun=tailscale0123456
 check_fails 'scan: --internal-install is refused unprivileged' \
 	env HOSTNAME=testbox "$REPO_ROOT/setup-initcpio-tailscale" --internal-install /tmp yes ''
 endgroup

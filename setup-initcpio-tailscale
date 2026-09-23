@@ -471,6 +471,12 @@ for arg in "$@"; do
     TS_TUN=${flag#*=}
     TS_TUN=${TS_TUN//[\"\']/}
     [[ -n $TS_TUN ]] || die "--tun= needs an interface name"
+    # The name lands in a sed replacement and in default.env, which root
+    # sources on every image build, so anything beyond a kernel interface
+    # name (IFNAMSIZ-1 characters) or tailscaled's own keyword is refused
+    # here rather than breaking the install half way or running as code.
+    [[ $TS_TUN =~ ^[A-Za-z0-9_.-]{1,15}$ || $TS_TUN == userspace-networking ]] ||
+      die "--tun=${TS_TUN} is not a valid interface name"
     continue
     ;;
   ssh | ssh=*)
