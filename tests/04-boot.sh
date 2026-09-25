@@ -97,7 +97,10 @@ declare -A SC_SETUP_ARGS=(
 	[busybox]=''
 	[dropbear]='--no-ssh'
 	[kerneltun]='--tun'
-	[dropbeartun]='--no-ssh --tun'
+	# The explicit netfilter mode is the default's own value, so the boot is
+	# unchanged; it is here to show the helper leaves tailscale's warning
+	# about it alone when the user chose it.
+	[dropbeartun]='--no-ssh --tun --netfilter-mode=off'
 )
 # Evidence from inside the guest that the hook ran, per branch: the unit on one
 # side, the runtime hook's own first line on the other.
@@ -429,6 +432,16 @@ for sc in "${SCENARIOS[@]}"; do
 	check_fails "$sc: setup left no tailscaled running" \
 		pgrep -f -- "-statedir=$setup_tmp/"
 	rm -rf "$setup_tmp"
+
+	# tailscale up warns about netfilter=off on every run. The helper drops the
+	# line when it chose the mode itself, and passes it on when the user did.
+	if [[ ${SC_SETUP_ARGS[$sc]} == *--netfilter-mode* ]]; then
+		check "$sc: an explicit --netfilter-mode=off keeps tailscale's warning" \
+			grep -q 'netfilter=off; configure iptables yourself' "$WORK/setup.$sc.log"
+	else
+		check_fails "$sc: the default netfilter mode prints no warning" \
+			grep -q 'netfilter=off; configure iptables yourself' "$WORK/setup.$sc.log"
+	fi
 
 	check "$sc: setup wrote tailscaled.state" test -s "$TS_SETUPDIR/tailscaled.state"
 	check "$sc: the node key is mode 600 on the host" \
