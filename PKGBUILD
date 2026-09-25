@@ -22,14 +22,17 @@ license=("GPL-2.0-or-later")
 # tailscale is needed at image build time: the install hook copies tailscaled
 # into the image, and add_binary fails the build without it.
 depends=("mkinitcpio" "tailscale")
-optdepends=("jq: node key expiry checking in setup-initcpio-tailscale --check")
+optdepends=("jq: node key expiry checking in setup-initcpio-tailscale --check"
+  "binutils: UKI inspection in setup-initcpio-tailscale --check")
 install=mkinitcpio-tailscale.install
 source=("initcpio-hooks-tailscale"
   "initcpio-install-tailscale"
   "setup-initcpio-tailscale"
   "libalpm-hook-tailscale"
-  "libalpm-script-tailscale")
+  "libalpm-script-tailscale"
+  "lib-presets.sh")
 sha256sums=('SKIP'
+            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -41,4 +44,5 @@ package() {
   install -m 755 -D "${srcdir}/setup-initcpio-tailscale" "${pkgdir}/usr/bin/setup-initcpio-tailscale"
   install -m 644 -D "${srcdir}/libalpm-hook-tailscale" "${pkgdir}/usr/share/libalpm/hooks/mkinitcpio-tailscale.hook"
   install -m 755 -D "${srcdir}/libalpm-script-tailscale" "${pkgdir}/usr/share/libalpm/scripts/mkinitcpio-tailscale"
+  install -m 644 -D "${srcdir}/lib-presets.sh" "${pkgdir}/usr/lib/mkinitcpio-tailscale/presets.sh"
 }

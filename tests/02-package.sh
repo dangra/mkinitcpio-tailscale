@@ -73,6 +73,7 @@ if diff -u - "$WORK/staged.files" >"$WORK/staged.diff" <<-'EOF'; then
 	README.md
 	initcpio-hooks-tailscale
 	initcpio-install-tailscale
+	lib-presets.sh
 	libalpm-hook-tailscale
 	libalpm-script-tailscale
 	mkinitcpio-tailscale.install
@@ -133,6 +134,7 @@ done <<-'EOF'
 	-rwxr-xr-x usr/bin/setup-initcpio-tailscale
 	-rw-r--r-- usr/share/libalpm/hooks/mkinitcpio-tailscale.hook
 	-rwxr-xr-x usr/share/libalpm/scripts/mkinitcpio-tailscale
+	-rw-r--r-- usr/lib/mkinitcpio-tailscale/presets.sh
 EOF
 
 # Guards against a stray file sneaking into the package.
@@ -140,6 +142,7 @@ if diff -u - "$WORK/payload.files" >"$WORK/payload.diff" <<-'EOF'; then
 	usr/bin/setup-initcpio-tailscale
 	usr/lib/initcpio/hooks/tailscale
 	usr/lib/initcpio/install/tailscale
+	usr/lib/mkinitcpio-tailscale/presets.sh
 	usr/share/libalpm/hooks/mkinitcpio-tailscale.hook
 	usr/share/libalpm/scripts/mkinitcpio-tailscale
 EOF
