@@ -14,6 +14,8 @@ Four files reach users, via the AUR package:
 - `libalpm-hook-tailscale` / `libalpm-script-tailscale` rebuild the image
   when the tailscale package is upgraded, and
   `mkinitcpio-tailscale.install` migrates configs across breaking changes
+- `lib-presets.sh` resolves mkinitcpio's presets, the configurations and
+  images they build, for the libalpm script and for `--check`
 
 Everything else is packaging, tests, or release plumbing.
 

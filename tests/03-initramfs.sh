@@ -14,7 +14,7 @@ USE_INSTALLED=0
 [[ ${1:-} == --installed ]] && USE_INSTALLED=1
 
 need_root
-need_cmd mkinitcpio lsinitcpio depmod openssl
+need_cmd mkinitcpio lsinitcpio depmod openssl objcopy
 
 # The install hook copies tailscaled into every image it builds.
 need_cmd tailscaled
@@ -617,6 +617,17 @@ if build_image 'base systemd tailscale' >/dev/null 2>&1; then
 	install -d /boot
 	cp "$IMG" /boot/initramfs-staletest.img
 
+	# --check inspects what the presets build, so a preset has to name the
+	# stand-in. MKINITCPIO_PRESETS is mkinitcpio's own override, which the
+	# helper honours for the same reason.
+	install -d "$WORK/presets.L"
+	cat >"$WORK/presets.L/stale.preset" <<-EOF
+		ALL_kver="/usr/lib/modules/$KVER/vmlinuz"
+		PRESETS=('default')
+		default_image="/boot/initramfs-staletest.img"
+	EOF
+	export MKINITCPIO_PRESETS="$WORK/presets.L"
+
 	touch -d '2020-01-01' /boot/initramfs-staletest.img
 	bash "$REPO_ROOT/setup-initcpio-tailscale" --check >"$WORK/check.stale.log" 2>&1 || true
 	check 'L: an image older than tailscaled is reported' \
@@ -636,11 +647,126 @@ if build_image 'base systemd tailscale' >/dev/null 2>&1; then
 	check 'L: a configured CLI missing from the image fails' \
 		grep -q 'lacks the tailscale CLI' "$WORK/check.cli.log"
 
+	# With no usable preset at all, /boot/initramfs-*.img is what is left to
+	# look at.
+	install -d "$WORK/presets.none"
+	MKINITCPIO_PRESETS="$WORK/presets.none" bash "$REPO_ROOT/setup-initcpio-tailscale" --check \
+		>"$WORK/check.nopreset.log" 2>&1 || true
+	check 'L: without presets, /boot images are still inspected' \
+		grep -q 'initramfs-staletest.img contains tailscaled' "$WORK/check.nopreset.log"
+
+	unset MKINITCPIO_PRESETS
 	rm -f /boot/initramfs-staletest.img
 	restore_conf
 else
 	fail 'L: mkinitcpio builds the image to stand in for /boot' "$(tail -20 "$LOG")"
 fi
+endgroup
+
+# --- variant M: presets with their own configuration, and UKIs -----------
+# `mkinitcpio -P` builds what the presets say, from whichever configuration
+# each names. Both the libalpm script and --check have to follow them there,
+# and --check has to open a UKI as readily as a plain image. The preset
+# directory is a fixture, through the MKINITCPIO_PRESETS override mkinitcpio
+# and lib-presets.sh both honour.
+group 'variant M: presets, custom configurations and UKIs'
+
+PRESET_DIR="$WORK/presets.M"
+TS_CONF=/etc/mkinitcpio-tailscale-test.conf
+# write_preset <name> <body>: the preset directory holds just this one.
+write_preset() {
+	rm -rf "$PRESET_DIR"
+	install -d "$PRESET_DIR"
+	printf 'ALL_kver="/usr/lib/modules/%s/vmlinuz"\n%s\n' "$KVER" "$2" \
+		>"$PRESET_DIR/$1.preset"
+}
+m_alpm() { MKINITCPIO_PRESETS="$PRESET_DIR" run_alpm >/dev/null 2>&1; }
+m_check() { MKINITCPIO_PRESETS="$PRESET_DIR" run_doctor; }
+
+fixtures_write --ssh
+rm -rf /etc/mkinitcpio.conf.d
+printf 'HOOKS=(base systemd sd-network sd-encrypt filesystems)\n' >/etc/mkinitcpio.conf
+printf 'HOOKS=(base systemd sd-network tailscale sd-encrypt filesystems)\n' >"$TS_CONF"
+
+# A preset naming its own configuration: the default file says nothing.
+write_preset remote "PRESETS=('default')
+default_config=\"$TS_CONF\"
+default_image=\"$WORK/remote.img\""
+: >"$ALPM_CALLS"
+check 'M: exits 0 for a preset with its own configuration' m_alpm
+check "M: rebuilds when only a preset's configuration lists tailscale" \
+	grep -qx -- '-P' "$ALPM_CALLS"
+check "M: --check passes when only a preset's configuration lists tailscale" m_check
+check 'M: and warns the image has not been built yet' \
+	grep -q 'remote.img has not been built yet' "$WORK/doctor.log"
+
+# Two presets, only one of them with tailscale: a fallback without it is a
+# choice worth a warning, not a failure.
+write_preset remote "PRESETS=('default' 'plain')
+default_config=\"$TS_CONF\"
+default_image=\"$WORK/remote.img\"
+plain_image=\"$WORK/plain.img\""
+check 'M: a second configuration without tailscale passes' m_check
+check 'M: but is warned about by path' \
+	grep -q "WARN .*/etc/mkinitcpio.conf: 'tailscale' is not in HOOKS=" "$WORK/doctor.log"
+
+# The preset's own configuration misordered: the message names that file.
+printf 'HOOKS=(base tailscale systemd sd-network sd-encrypt filesystems)\n' >"$TS_CONF"
+write_preset remote "PRESETS=('default')
+default_config=\"$TS_CONF\"
+default_image=\"$WORK/remote.img\""
+check_fails "M: a misordered preset configuration fails" m_check
+check 'M: and the report names that configuration' \
+	grep -q "$TS_CONF: 'tailscale' is listed before 'systemd'" "$WORK/doctor.log"
+
+# Naming a configuration, even the default file, turns the drop-ins off in
+# mkinitcpio; a tailscale that only a drop-in adds does not reach the image.
+install -d /etc/mkinitcpio.conf.d
+printf 'HOOKS=(base systemd sd-network tailscale sd-encrypt filesystems)\n' \
+	>/etc/mkinitcpio.conf.d/tailscale.conf
+write_preset linux "PRESETS=('default')
+ALL_config=\"/etc/mkinitcpio.conf\"
+default_image=\"$WORK/linux.img\""
+: >"$ALPM_CALLS"
+check 'M: exits 0 when an explicit configuration skips the drop-ins' m_alpm
+check_fails 'M: no rebuild for a tailscale only the ignored drop-in lists' \
+	test -s "$ALPM_CALLS"
+check_fails 'M: --check fails the same configuration' m_check
+
+# The same drop-in counts when the preset names no configuration.
+write_preset linux "PRESETS=('default')
+default_image=\"$WORK/linux.img\""
+check 'M: drop-ins count for a preset without a configuration' m_alpm
+check 'M: and the rebuild runs' grep -qx -- '-P' "$ALPM_CALLS"
+rm -rf /etc/mkinitcpio.conf.d
+
+# A real UKI, built by mkinitcpio itself, is opened and inspected.
+printf 'HOOKS=(base systemd sd-network tailscale sd-encrypt filesystems)\n' >"$TS_CONF"
+if build_image 'base systemd tailscale' >/dev/null 2>&1 &&
+	mkinitcpio -n "${MKI_HOOKDIR_ARGS[@]}" -c "$WORK/mkinitcpio.$BUILD_N.conf" -k "$KVER" \
+		-U "$WORK/arch.efi" >"$WORK/build.uki.log" 2>&1; then
+	pass 'M: mkinitcpio builds a UKI with the hook'
+	write_preset uki "PRESETS=('default')
+default_config=\"$TS_CONF\"
+default_uki=\"$WORK/arch.efi\""
+	check 'M: --check passes for a UKI preset' m_check
+	check 'M: and finds tailscaled inside the UKI' \
+		grep -q 'arch.efi contains tailscaled' "$WORK/doctor.log"
+
+	# Without objcopy the UKI cannot be opened. Moving the binary aside is
+	# safe for the same reason the tailscaled shim is: container only.
+	objcopy_bin=$(command -v objcopy)
+	mv "$objcopy_bin" "$objcopy_bin.hidden"
+	m_check || true
+	mv "$objcopy_bin.hidden" "$objcopy_bin"
+	check 'M: without objcopy the UKI is reported as not inspectable' \
+		grep -q 'arch.efi is a UKI and objcopy (binutils) is not installed' "$WORK/doctor.log"
+else
+	fail 'M: mkinitcpio builds a UKI with the hook' "$(tail -20 "$WORK/build.uki.log" 2>/dev/null || tail -20 "$LOG")"
+fi
+
+rm -f "$TS_CONF"
+restore_conf
 endgroup
 
 if ((TESTS_FAILED)) && [[ -n ${ARTIFACT_DIR:-} ]]; then
