@@ -14,7 +14,7 @@ USE_INSTALLED=0
 [[ ${1:-} == --installed ]] && USE_INSTALLED=1
 
 need_root
-need_cmd mkinitcpio lsinitcpio depmod openssl objcopy
+need_cmd mkinitcpio lsinitcpio depmod openssl objcopy chroot script
 
 # The install hook copies tailscaled into every image it builds.
 need_cmd tailscaled
@@ -118,6 +118,62 @@ snapshot() {
 
 in_list() { grep -qxF -- "$1" "$LIST"; }
 
+# in_image [--tty] [--user <uid>] <cmd...> — run a command chrooted into the
+# extracted image, with the image's own busybox as the shell. --tty puts it
+# behind a pseudo-terminal, which is what an ssh login has and a pipe has not.
+# Prints everything the command wrote and returns its status.
+in_image() {
+	local tty=0 spec=0:0 cmd
+	while :; do
+		case $1 in
+		--tty) tty=1 ;;
+		--user) spec=$2:$2 && shift ;;
+		*) break ;;
+		esac
+		shift
+	done
+	if ((tty)); then
+		printf -v cmd '%q ' chroot --userspec="$spec" "$ROOT" "$@"
+		script -qec "$cmd" /dev/null </dev/null
+	else
+		chroot --userspec="$spec" "$ROOT" "$@" </dev/null
+	fi
+}
+
+# unlock_says <label> <want-status> <regex> <in_image args...>
+unlock_says() {
+	local label=$1 want=$2 re=$3 out rc
+	shift 3
+	out=$(in_image "$@" 2>&1)
+	rc=$?
+	if [[ $rc == "$want" ]] && grep -Eq -- "$re" <<<"$out"; then
+		pass "$label"
+	else
+		fail "$label" "$(printf 'want status %s and /%s/, got status %s:\n%s' \
+			"$want" "$re" "$rc" "$out")"
+	fi
+}
+
+# Shared expectations for the unlock command and the profile that offers it.
+assert_unlock_files() {
+	local label=$1
+	img_has "$ROOT" usr/bin/unlock
+	check "$label: unlock is executable" test -x "$ROOT/usr/bin/unlock"
+	img_grep "$ROOT" etc/profile '^\[ -t 0 \] && /usr/bin/unlock --login$'
+	if bb=$(initcpio_busybox); then
+		check "$label: unlock parses under busybox ash" "$bb" ash -n "$ROOT/usr/bin/unlock"
+		check "$label: the profile parses under busybox ash" "$bb" ash -n "$ROOT/etc/profile"
+	fi
+}
+
+# stub_in_image <relpath> <name> — a stand-in program that only reports how it
+# was called, for the things the unlock command hands the terminal to.
+stub_in_image() {
+	# shellcheck disable=SC2016 # $* belongs to the stub, not to this script
+	printf '#!/bin/sh\necho "%s $*"\n' "$2" >"$ROOT/$1"
+	chmod 755 "$ROOT/$1"
+}
+
 # Shared expectations for every successful build. The optional second
 # argument holds space-separated opt-ins the build enabled: 'tun' for a
 # TUN="..." build, which must carry the module, 'cli' for a CLI="yes" build,
@@ -206,6 +262,33 @@ if build_image 'base systemd tailscale'; then
 	# busybox branch falls back to, so a surviving 'wheel' is what proves the
 	# fallback kept its hands off.
 	img_grep "$ROOT" etc/group '^wheel:'
+
+	# unlock, run inside the image itself. A stand-in /run plays the state a
+	# booted systemd initramfs would show it, and a stub plays the password
+	# agent, which only sd-encrypt brings into the image.
+	assert_unlock_files A
+	install -d "$ROOT/run/systemd/system" "$ROOT/run/systemd/ask-password"
+	unlock_says 'A: a login with nothing pending is only told about unlock' \
+		0 "^Run 'unlock'" --tty /usr/bin/unlock --login
+	: >"$ROOT/run/systemd/ask-password/ask.test"
+	unlock_says 'A: unlock without a terminal says to use ssh -t' \
+		1 "ssh -t" /usr/bin/unlock
+	unlock_says 'A: an unprivileged login is only told about unlock' \
+		0 "^Run 'unlock'" --tty --user 1042 /usr/bin/unlock --login
+	unlock_says 'A: unlock refuses an unprivileged user' \
+		1 'only root' --tty --user 1042 /usr/bin/unlock
+	unlock_says 'A: without sd-encrypt unlock says what is missing' \
+		1 'is sd-encrypt in HOOKS' --tty /usr/bin/unlock
+	stub_in_image usr/bin/systemd-tty-ask-password-agent agent
+	unlock_says 'A: unlock hands the terminal to the password agent' \
+		0 '^agent --watch' --tty /usr/bin/unlock
+	unlock_says 'A: a root login with a prompt pending goes straight to it' \
+		0 '^agent --watch' --tty /bin/sh -l -c true
+	rm "$ROOT/run/systemd/ask-password/ask.test"
+	unlock_says 'A: a root login with nothing pending gets a shell' \
+		0 "^Run 'unlock'" --tty /bin/sh -l -c true
+	check 'A: a login without a terminal is left alone' \
+		test -z "$(in_image /bin/sh -l -c true 2>&1)"
 else
 	fail 'A: mkinitcpio builds' "$(tail -30 "$LOG")"
 fi
@@ -245,6 +328,18 @@ if build_image 'base udev tailscale'; then
 	check 'B: the root shell exists in the image' test -x "$ROOT/bin/sh"
 	check 'B: /etc/shadow is not world readable' \
 		test "$(stat -c %a "$ROOT/etc/shadow" 2>/dev/null)" = 400
+
+	# The busybox side of unlock: the stock 'encrypt' hook asks on the console
+	# alone, so without encryptssh's cryptsetup_shell there is nothing to hand
+	# the terminal to, and unlock has to say so rather than hang.
+	assert_unlock_files B
+	unlock_says 'B: a login is told about unlock' \
+		0 "^Run 'unlock'" --tty /usr/bin/unlock --login
+	unlock_says 'B: unlock without encryptssh points at it' \
+		1 'encryptssh' --tty /usr/bin/unlock
+	stub_in_image usr/bin/cryptsetup_shell cryptsetup_shell
+	unlock_says "B: unlock hands over to encryptssh's cryptsetup_shell" \
+		0 '^cryptsetup_shell' --tty /usr/bin/unlock
 else
 	fail 'B: mkinitcpio builds' "$(tail -30 "$LOG")"
 fi

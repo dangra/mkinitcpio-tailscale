@@ -39,7 +39,7 @@ PKGS=(git)
 want 01 && PKGS+=(shellcheck mkinitcpio)
 want 02 && PKGS+=(pacman-contrib namcap)
 want 03 && PKGS+=(mkinitcpio linux tailscale)
-want 04 && PKGS+=(mkinitcpio linux tailscale openssh qemu-base jq curl dropbear opendoas)
+want 04 && PKGS+=(mkinitcpio linux tailscale openssh qemu-base jq curl dropbear opendoas cryptsetup)
 
 RUN_OPTS=()
 [[ -t 0 && -t 1 ]] && RUN_OPTS+=(-it)

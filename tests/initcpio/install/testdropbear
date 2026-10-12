@@ -2,7 +2,9 @@
 # Test-only mkinitcpio hook: puts a dropbear ssh server into the image, so
 # tests/04-boot.sh can prove the --no-ssh path -- a node registered without
 # Tailscale SSH stays reachable through tailscaled's userspace networking,
-# which proxies inbound tailnet TCP to the same port on loopback.
+# which proxies inbound tailnet TCP to the same port on loopback. It is also
+# how the luks scenario gets the root login that answering a passphrase prompt
+# takes, which Tailscale SSH under headscale cannot grant (see testuser).
 #
 # This stands in for the dropbear hook from mkinitcpio-extras, which lives in
 # the AUR; see tests/initcpio/install/testnet for why the suite does not
@@ -24,10 +26,6 @@
 # It is scaffolding for the test suite and is not part of the shipped package.
 
 build() {
-	if [[ $(type -t add_systemd_unit) == function ]]; then
-		warning "testdropbear: this scaffold only supports the busybox branch"
-		return 0
-	fi
 	if [[ ! -r ${TESTDROPBEAR_HOSTKEY:-} || ! -r ${TESTDROPBEAR_AUTHKEYS:-} ]]; then
 		warning "testdropbear: TESTDROPBEAR_HOSTKEY/TESTDROPBEAR_AUTHKEYS not set; leaving dropbear out"
 		return 0
@@ -37,16 +35,35 @@ build() {
 	add_file "$TESTDROPBEAR_HOSTKEY" /etc/dropbear/dropbear_ed25519_host_key 0600
 	add_dir /root/.ssh 0700
 	add_file "$TESTDROPBEAR_AUTHKEYS" /root/.ssh/authorized_keys 0600
-	add_runscript
+
+	if [[ $(type -t add_systemd_unit) != function ]]; then
+		add_runscript
+		return 0
+	fi
+
+	# systemd: the same daemon as a unit, started alongside tailscaled in
+	# sysinit.target and logging to the console the boot test captures. The pid
+	# file goes to /run, which systemd always provides.
+	add_file - /etc/systemd/system/testdropbear.service 0644 <<-'__EOF_UNIT__'
+		[Unit]
+		Description=Test-only dropbear
+		DefaultDependencies=no
+		[Service]
+		ExecStart=/usr/bin/dropbear -F -E -P /run/dropbear.pid -r /etc/dropbear/dropbear_ed25519_host_key
+		StandardOutput=journal+console
+		StandardError=journal+console
+	__EOF_UNIT__
+	add_symlink /etc/systemd/system/sysinit.target.wants/testdropbear.service \
+		/etc/systemd/system/testdropbear.service
 
 	return 0
 }
 
 help() {
 	cat <<-__EOF_HELP__
-		Test-only hook. Adds a dropbear server with test-supplied keys to a busybox
-		image, so the boot test can log in without Tailscale SSH. Not for
-		production use.
+		Test-only hook. Adds a dropbear server with test-supplied keys to the
+		image, so the boot test can log in without Tailscale SSH, and as root.
+		Not for production use.
 	__EOF_HELP__
 }
 
