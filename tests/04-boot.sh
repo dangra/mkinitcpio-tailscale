@@ -27,6 +27,11 @@
 #   dropbeartun  --no-ssh and --tun together: the remedy the docs offer a
 #              user whose own daemon cannot live behind the loopback proxy,
 #              so it has to be more than advice
+#   luks       systemd with sd-encrypt and a LUKS disk: a root login is taken
+#              straight to the passphrase prompt, and answering it unlocks
+#              the volume. Root logins come from dropbear, registered --no-ssh,
+#              since headscale cannot grant one over Tailscale SSH; every
+#              Tailscale SSH scenario proves that path reads /etc/profile
 #
 # The first two register with Tailscale SSH, which is what the setup helper
 # does when left alone. The dropbear scenario is what proves the --no-ssh
@@ -41,7 +46,7 @@
 #
 #   --installed         test /usr/lib/initcpio/... and /usr/bin/setup-initcpio-tailscale
 #                       from the built package instead of the working tree
-#   systemd | busybox | dropbear | kerneltun
+#   systemd | busybox | dropbear | kerneltun | dropbeartun | luks
 #                       boot only the named scenarios (or set BOOT_SCENARIOS)
 # shellcheck source-path=SCRIPTDIR
 set -uo pipefail
@@ -81,15 +86,22 @@ declare -A SC_HOOKS=(
 	[dropbear]='base udev testnet tailscale testuser testdropbear'
 	[kerneltun]='base udev testnet tailscale testuser'
 	[dropbeartun]='base udev testnet tailscale testuser testdropbear'
+	[luks]='base systemd testnet tailscale testdropbear sd-encrypt'
 )
-declare -A SC_SUFFIX=([systemd]=sd [busybox]=bb [dropbear]=db [kerneltun]=kt [dropbeartun]=dt)
+declare -A SC_SUFFIX=([systemd]=sd [busybox]=bb [dropbear]=db [kerneltun]=kt [dropbeartun]=dt [luks]=lk)
 declare -A SC_ROOT=(
 	[systemd]=deadbeef-0000-0000-0000-000000000001
 	[busybox]=deadbeef-0000-0000-0000-000000000002
 	[dropbear]=deadbeef-0000-0000-0000-000000000003
 	[kerneltun]=deadbeef-0000-0000-0000-000000000004
 	[dropbeartun]=deadbeef-0000-0000-0000-000000000005
+	# The LUKS header's UUID, named on the command line by rd.luks.name=.
+	[luks]=deadbeef-0000-0000-0000-000000000006
 )
+# Where root= points when it is not the bogus UUID: the luks scenario mounts
+# the mapping its volume unlocks to, which systemd-cryptsetup exempts from the
+# 90s device timeout -- so the prompt waits for the test however slow the boot.
+declare -A SC_ROOTDEV=([luks]=/dev/mapper/cryptci)
 # Extra setup-helper arguments per scenario: the dropbear one registers the
 # way a user bringing their own ssh daemon would.
 declare -A SC_SETUP_ARGS=(
@@ -101,6 +113,7 @@ declare -A SC_SETUP_ARGS=(
 	# unchanged; it is here to show the helper leaves tailscale's warning
 	# about it alone when the user chose it.
 	[dropbeartun]='--no-ssh --tun --netfilter-mode=off'
+	[luks]='--no-ssh'
 )
 # Scenarios registered with the tagged pre-auth key. Only one that runs its own
 # ssh server: the Tailscale SSH policy above grants logins to ci@'s nodes, and
@@ -122,6 +135,9 @@ declare -A SC_CONSOLE=(
 	[dropbear]='Starting Tailscale'
 	[kerneltun]='Starting Tailscale'
 	[dropbeartun]='Starting Tailscale'
+	# The passphrase prompt holds the console, and systemd prints no further
+	# status lines under it -- so only the start of the job ever shows here.
+	[luks]='Starting Tailscale node agent'
 )
 
 # mkinitcpio's init drops into an interactive rescue shell once it gives up on
@@ -135,6 +151,7 @@ declare -A SC_APPEND=(
 	[dropbear]="rootdelay=$((BOOT_TIMEOUT + 120))"
 	[kerneltun]="rootdelay=$((BOOT_TIMEOUT + 120))"
 	[dropbeartun]="rootdelay=$((BOOT_TIMEOUT + 120))"
+	[luks]="rd.luks.name=deadbeef-0000-0000-0000-000000000006=cryptci"
 )
 
 USE_INSTALLED=0
@@ -142,13 +159,13 @@ SCENARIOS=()
 for arg in "$@"; do
 	case $arg in
 	--installed) USE_INSTALLED=1 ;;
-	systemd | busybox | dropbear | kerneltun | dropbeartun) SCENARIOS+=("$arg") ;;
-	*) die "unknown argument: $arg (expected --installed, systemd, busybox, dropbear, kerneltun or dropbeartun)" ;;
+	systemd | busybox | dropbear | kerneltun | dropbeartun | luks) SCENARIOS+=("$arg") ;;
+	*) die "unknown argument: $arg (expected --installed, systemd, busybox, dropbear, kerneltun, dropbeartun or luks)" ;;
 	esac
 done
 if ((${#SCENARIOS[@]} == 0)); then
 	# shellcheck disable=SC2206 # a space separated override is the point
-	SCENARIOS=(${BOOT_SCENARIOS:-systemd busybox dropbear kerneltun dropbeartun})
+	SCENARIOS=(${BOOT_SCENARIOS:-systemd busybox dropbear kerneltun dropbeartun luks})
 fi
 
 has_scenario() {
@@ -170,6 +187,7 @@ is_dropbear_sc() { [[ ${SC_HOOKS[$1]} == *testdropbear* ]]; }
 need_root
 need_cmd mkinitcpio qemu-system-x86_64 curl jq depmod ssh ssh-keygen
 uses_dropbear && need_cmd dropbearkey
+has_scenario luks && need_cmd cryptsetup
 need_pkg tailscale
 
 WORK=$(mktemp -d)
@@ -783,18 +801,20 @@ run_scenario() {
 	local node="${TS_NODE_NAME}-${SC_SUFFIX[$sc]}"
 	local img="$WORK/initrd.$sc.img" conf="$WORK/mkinitcpio.$sc.conf"
 	local console="$WORK/console.$sc.log" text="$WORK/console.$sc.txt"
-	local root="/dev/disk/by-uuid/${SC_ROOT[$sc]}"
+	local root=${SC_ROOTDEV[$sc]:-/dev/disk/by-uuid/${SC_ROOT[$sc]}}
+	local disk=()
+	[[ $sc == luks ]] && disk=(-drive "file=$LUKS_IMG,format=raw,if=virtio")
 
 	group "build the $sc boot image"
 	rm -rf "$TS_SETUPDIR"
 	cp -a "$WORK/state.$sc" "$TS_SETUPDIR"
 
 	cat >"$conf" <<-EOF
-		# The virtio drivers are for the QEMU NIC; listing them in MODULES both
-		# includes and autoloads them. No tun: tailscaled runs with userspace
-		# networking, and its absence here is what proves that path needs no
-		# kernel module.
-		MODULES=(virtio_net virtio_pci)
+		# The virtio drivers are for the QEMU NIC and the luks scenario's disk;
+		# listing them in MODULES both includes and autoloads them. No tun:
+		# tailscaled runs with userspace networking, and its absence here is
+		# what proves that path needs no kernel module.
+		MODULES=(virtio_net virtio_pci virtio_blk)
 		BINARIES=()
 		FILES=()
 		HOOKS=(${SC_HOOKS[$sc]})
@@ -845,6 +865,7 @@ run_scenario() {
 		-append "console=ttyS0 root=$root rw systemd.log_level=info ${SC_APPEND[$sc]}" \
 		-netdev user,id=n0 \
 		-device virtio-net-pci,netdev=n0 \
+		"${disk[@]}" \
 		-serial "file:$console" \
 		>"$WORK/qemu.$sc.log" 2>&1 &
 	QEMU_PID=$!
@@ -888,6 +909,7 @@ run_scenario() {
 	if ((online)); then
 		assert_ssh "$sc" "$node"
 		[[ $sc == systemd ]] && assert_survives_emergency "$sc" "$node" "$console" "$text"
+		[[ $sc == luks ]] && assert_unlocks "$sc" "$console" "$text"
 	else
 		warn "$sc: skipping the ssh assertions; the node never came online"
 	fi
@@ -941,6 +963,81 @@ assert_survives_emergency() {
 	check "$sc: ssh still works in emergency mode" ssh_runs_a_command
 }
 
+# Runs a command on the guest over the session assert_ssh set up.
+ssh_guest() {
+	# shellcheck disable=SC2029 # the arguments are the remote command line
+	ssh "${SSH_OPTS[@]}" "$SSH_LOGIN@$SSH_IP" "$@"
+}
+
+# An interactive login, fed the given input with pauses in between: each
+# argument is either 'sleep:<seconds>' or text typed at the terminal. It is
+# what a person at an ssh prompt does, so it gets a pseudo-terminal (-tt) and
+# the login shell that comes with one. Prints everything the session wrote.
+ssh_login() {
+	local o opts=() a
+	for o in "${SSH_OPTS[@]}"; do
+		[[ $o == -n ]] || opts+=("$o")
+	done
+	for a; do
+		case $a in
+		sleep:*) sleep "${a#sleep:}" ;;
+		*) printf '%s' "$a" ;;
+		esac
+	done | timeout 120 ssh -tt "${opts[@]}" "$SSH_LOGIN@$SSH_IP" 2>&1
+}
+
+# Tailscale SSH starts an interactive session as a login shell, which is what
+# lets /etc/profile point the user at unlock. Unprivileged here (see
+# testuser), so the profile only prints its hint -- which is the evidence.
+login_mentions_unlock() {
+	local out
+	out=$(ssh_login sleep:5 $'exit\n')
+	printf '%s\n' "$out"
+	[[ $out == *"Run 'unlock' to enter the disk passphrase."* ]]
+}
+
+# The luks scenario: the volume waits for a passphrase, a root login lands on
+# the prompt without being asked, and what it types unlocks the volume.
+assert_unlocks() {
+	local sc=$1 console=$2 text=$3 out deadline
+	local ask=/run/systemd/ask-password
+
+	deadline=$((SECONDS + 90))
+	until ssh_guest "ls $ask/ask.*" >/dev/null 2>&1 || ((SECONDS >= deadline)); do
+		sleep 5
+	done
+	check "$sc: a passphrase prompt is pending" ssh_guest "ls $ask/ask.*"
+	check_fails "$sc: the volume is still locked" ssh_guest 'test -e /dev/mapper/cryptci'
+
+	# Typed after the prompt is up, then Ctrl-C back to the shell and out --
+	# the same keystrokes a person would use.
+	out=$(ssh_login sleep:15 "$LUKS_PASS"$'\n' sleep:15 $'\003' sleep:2 $'exit\n')
+	printf '%s\n' "$out" >"$WORK/unlock.$sc.txt"
+	if [[ $out == *'Answering passphrase prompts'* ]]; then
+		pass "$sc: a root login goes straight to unlock"
+	else
+		fail "$sc: a root login goes straight to unlock" "$out"
+	fi
+	if [[ $out == *'passphrase for disk'* ]]; then
+		pass "$sc: unlock shows the volume's passphrase prompt"
+	else
+		fail "$sc: unlock shows the volume's passphrase prompt" "$out"
+	fi
+
+	deadline=$((SECONDS + 60))
+	until ssh_guest 'test -b /dev/mapper/cryptci' 2>/dev/null || ((SECONDS >= deadline)); do
+		sleep 5
+	done
+	if ssh_guest 'test -b /dev/mapper/cryptci' 2>/dev/null; then
+		pass "$sc: the passphrase typed over ssh unlocked the volume"
+	else
+		sed -r 's/\x1B\[[0-9;?]*[a-zA-Z]//g; s/\x1B\][^\x07]*(\x07|\x1B\\)//g' \
+			"$console" >"$text" 2>/dev/null
+		fail "$sc: the passphrase typed over ssh unlocked the volume" \
+			"$(printf 'session:\n%s\nlast 30 lines of console:\n%s' "$out" "$(tail -30 "$text")")"
+	fi
+}
+
 assert_ssh() {
 	local sc=$1 node=$2 ip
 	ip=$(node_ip "$node")
@@ -988,6 +1085,8 @@ assert_ssh() {
 	check "$sc: ssh runs a command inside the initramfs" ssh_runs_a_command
 	check "$sc: the ssh host key is the expected one" \
 		hostkey_is_the_expected_one
+	is_dropbear_sc "$sc" ||
+		check "$sc: a Tailscale SSH login is told about unlock" login_mentions_unlock
 }
 
 # --- boot -----------------------------------------------------------------
@@ -1029,6 +1128,22 @@ if uses_dropbear; then
 	for sc in "${SCENARIOS[@]}"; do
 		is_dropbear_sc "$sc" && cp "$WORK/dropbear_host_key.pub" "$WORK/hostkey.$sc.pub"
 	done
+fi
+
+# The luks scenario's disk: a LUKS2 header and nothing else, since the test
+# only needs the volume to unlock. PBKDF2 at its floor keeps the key derivation
+# instant under TCG, where argon2's default memory cost would not be.
+LUKS_PASS='initrd-unlock-test'
+LUKS_IMG="$WORK/luks.img"
+if has_scenario luks; then
+	truncate -s 32M "$LUKS_IMG"
+	if printf '%s' "$LUKS_PASS" | cryptsetup luksFormat -q --type luks2 \
+		--uuid "${SC_ROOT[luks]}" --pbkdf pbkdf2 --pbkdf-force-iterations 1000 \
+		--key-file - "$LUKS_IMG" >"$WORK/luksformat.log" 2>&1; then
+		pass 'luks: the test volume is formatted'
+	else
+		fail 'luks: the test volume is formatted' "$(cat "$WORK/luksformat.log")"
+	fi
 fi
 
 for sc in "${SCENARIOS[@]}"; do

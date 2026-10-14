@@ -32,6 +32,9 @@ half:
 - ArchWiki: [Dm-crypt/Specialties#Remote unlocking of root (or other)
   partition][4]
 
+Entering the passphrase once the machine is waiting for it is covered in
+[Unlocking](#unlocking).
+
 ## Installation
 
 You can install [`mkinitcpio-tailscale`][aur] from the AUR:
@@ -113,8 +116,12 @@ file of its own (`ALL_config=` or `<preset>_config=`), edit that file instead:
 HOOKS=(base systemd autodetect microcode modconf kms keyboard sd-vconsole block sd-network tailscale sd-encrypt filesystems fsck)
 
 # busybox-based
-HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block net tailscale encrypt filesystems fsck)
+HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block net tailscale encryptssh filesystems fsck)
 ```
+
+On a busybox-based initramfs the passphrase hook has to be `encryptssh`
+([mkinitcpio-utils][5]): the stock `encrypt` hook only reads the console, so
+nothing typed over SSH can answer it.
 
 On a systemd-based initramfs `tailscale` **must** come after `systemd`. The hook
 decides which kind of image it is building by looking for helpers that the
@@ -187,6 +194,30 @@ log in and finish the job by hand with
 image is covered too, for a different reason: its init tears tailscaled down
 before deciding the boot failed, so this hook starts it again on the way into
 the emergency shell.
+
+## Unlocking
+
+Log in to the initrd node as root:
+
+```sh
+ssh root@homeserver-initrd
+```
+
+On a systemd-based initramfs a login that finds the passphrase prompt waiting
+goes straight to it. It keeps answering prompts as they appear, one per
+encrypted volume and again after a typo, until the boot moves on and the
+connection closes. Press Ctrl-C to get a shell instead; type `unlock` there to
+come back to the prompt. To skip the shell altogether:
+
+```sh
+ssh -t root@homeserver-initrd unlock
+```
+
+The `-t` matters, since the prompt needs a terminal.
+
+On a busybox-based initramfs `encryptssh` makes its own unlock prompt root's
+login shell, so a root login asks for the passphrase straight away, and
+`unlock` runs the same prompt from any other shell.
 
 ## Tailscale SSH server
 
@@ -406,3 +437,4 @@ the boot scenarios, how releases are cut -- is in
 [2]: https://tailscale.com
 [3]: https://wiki.archlinux.org/title/dm-crypt/Encrypting_an_entire_system#Configuring_mkinitcpio_2
 [4]: https://wiki.archlinux.org/title/Dm-crypt/Specialties#Remote_unlocking_of_root_(or_other)_partition
+[5]: https://aur.archlinux.org/packages/mkinitcpio-utils

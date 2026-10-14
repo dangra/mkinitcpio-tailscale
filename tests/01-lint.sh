@@ -44,6 +44,22 @@ else
 fi
 endgroup
 
+group 'scripts the install hook writes into the image'
+# The unlock command and /etc/profile live as heredocs in the install hook, out
+# of the reach of the shellcheck run above. They run under whatever /bin/sh the
+# image has, so they are held to POSIX sh.
+for doc in UNLOCK PROFILE; do
+	body=$(awk -v m="__EOF_${doc}__" '$0 ~ m"'"'"'$" {f=1; next} $0 == m {f=0} f' \
+		initcpio-install-tailscale)
+	if [[ -z $body ]]; then
+		fail "the $doc heredoc is found in the install hook" 'no such heredoc'
+		continue
+	fi
+	check "the $doc heredoc passes shellcheck as sh" \
+		shellcheck --shell=sh - <<<"$body"
+done
+endgroup
+
 group 'bash syntax'
 for f in "${SCRIPTS[@]}" PKGBUILD "${TEST_SCRIPTS[@]}"; do
 	check "$f parses as bash" bash -n "$f"
