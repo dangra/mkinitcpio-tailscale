@@ -127,6 +127,14 @@ declare -A SC_TAGGED=(
 declare -A SC_NO_JQ=(
 	[busybox]=1
 )
+# default.env leaves PORT commented out, so most scenarios boot with the port
+# left to tailscaled, the busybox kernel-TUN one like the machine an empty PORT
+# was first reported from. These set a fixed one instead, as someone with a
+# port forward would: one image per init.
+declare -A SC_FIXED_PORT=(
+	[systemd]=1
+	[kerneltun]=1
+)
 # Evidence from inside the guest that the hook ran, per branch: the unit on one
 # side, the runtime hook's own first line on the other.
 declare -A SC_CONSOLE=(
@@ -553,6 +561,14 @@ for sc in "${SCENARIOS[@]}"; do
 			grep -qx 'TUN="tailscale0"' "$TS_SETUPDIR/default.env"
 	fi
 	check "$sc: the node is registered with headscale" node_known "$node"
+
+	check "$sc: setup leaves PORT commented out" \
+		grep -qx '#PORT="41641"' "$TS_SETUPDIR/default.env"
+	if [[ -n ${SC_FIXED_PORT[$sc]:-} ]]; then
+		sed -i 's/^#PORT=/PORT=/' "$TS_SETUPDIR/default.env"
+		check "$sc: default.env now sets a fixed PORT" \
+			grep -qx 'PORT="41641"' "$TS_SETUPDIR/default.env"
+	fi
 
 	# Keep this scenario's configuration; $TS_SETUPDIR is shared, so it is put
 	# back immediately before the image that needs it is built.
