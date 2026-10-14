@@ -65,7 +65,9 @@ keys in `/etc/initcpio/tailscale/`. Pass `--no-ssh` if you would rather run
 **Disable key expiry for that node** on the [Machines page of the Tailscale
 admin console](https://console.tailscale.com/admin/machines). Node keys expire by default,
 and an expired initrd node cannot reach your tailnet, which you would discover
-while locked out of a machine that is waiting for its passphrase.
+while locked out of a machine that is waiting for its passphrase. A tagged node
+skips this step, since tagging disables expiry, and tagging is what you want
+anyway: see [Security considerations](#security-considerations).
 
 ### 2. Give the initramfs a network
 
@@ -274,61 +276,96 @@ node's expiry, and how it is set (and whether it applies at all) depends on
 your headscale version and configuration; the probe in `--check` reads the
 booted system's view of the tailnet and works against headscale all the same.
 
+headscale only tags a node through its auth key, and refuses
+`--advertise-tags` at registration, so create the key with the tag instead
+(the tag still needs a `tagOwners` entry in the policy):
+
+```sh
+headscale preauthkeys create --user <id> --tags tag:initrd
+```
+
 Tailscale SSH needs an `ssh` policy in headscale's ACLs before the node
 accepts a session; the [Security considerations](#security-considerations)
-example below is valid headscale policy. This is not a theoretical
+example below is valid headscale policy once `alice@example.com` names one of
+your headscale users. This is not a theoretical
 combination: the test suite boots every scenario against a throwaway
 headscale, so the path you are on is the one CI exercises.
 
 ## Security considerations
 
-The Tailscale node key is stored in plaintext inside the initramfs. Initramfs is
-usually not encrypted, so physical access to the machine could allow an attacker
-to extract the node key and impersonate your initrd node on your tailnet.
+The initrd node's key sits unencrypted in the initramfs: it has to, since the
+image uses it before anything is unlocked. Anyone who can read your boot
+partition can copy it and join your tailnet as `homeserver-initrd`. So give
+that node as little as possible: it should accept your SSH session and never
+be able to open a connection of its own.
 
-Mitigations:
+Tailscale's access rules make that possible, in two steps.
 
-- Restrict what the initramfs node can access with Tailscale ACLs and tags. Tag
-  the initrd node in the admin console and limit its permissions.
-- Prefer granting the initrd node only the minimal access required (for example,
-  only allow SSH from a narrow set of client tags).
-- If a node is ever compromised, remove it from the admin console
-  immediately and recreate the initramfs/node key.
+**Tag the node.** An untagged node belongs to the user who registered it and
+has all of that user's permissions. A [tag](https://tailscale.com/docs/features/tags)
+replaces that identity, so only rules that name the tag apply to it, and a
+tagged node's key does not expire by default either. Allow your account to
+apply the tag by adding it to `tagOwners` (example below), then register with
+it:
 
-Example ACL snippet to restrict initrd nodes (adapt to your tailnet):
+```sh
+setup-initcpio-tailscale --advertise-tags=tag:initrd
+```
+
+An [auth key](https://tailscale.com/docs/features/access-control/auth-keys) created with the tag
+works too, and is the only way with [headscale](#using-headscale). Without the
+`tagOwners` entry, registration fails with `requested tags [tag:initrd] are
+invalid or not permitted`. An existing node can also be tagged from the
+Machines page of the admin console.
+
+**Keep the tag out of every source.** Access rules only allow what they list,
+one direction at a time: a rule with `tag:initrd` as its destination lets you
+connect to the node, and replies to that connection flow back, but the node
+itself can start a connection only where a rule lists it as a source. Leave
+`tag:initrd` out of every `src`, including through `"*"`. Tailscale's default
+policy is a single allow-all rule with `"src": ["*"]`, which covers tagged nodes
+too, so replace it if your tailnet still has it. Rules using
+`autogroup:member` are fine: tagged nodes are not members.
+
+A policy that does both, where `alice@example.com` stands for your login:
 
 ```json
 {
-  "tagOwners": {
-    "tag:initrd": ["autogroup:admin"],
-    "tag:client": ["autogroup:admin"],
-    "tag:server": ["autogroup:admin"]
+  "groups": {
+    "group:admins": ["alice@example.com"]
   },
-
+  "tagOwners": {
+    "tag:initrd": ["group:admins"]
+  },
   "acls": [
-    { "action": "accept", "src": ["tag:client"], "dst": ["*:*"] },
-    { "action": "accept", "src": ["tag:server"], "dst": ["tag:server:*"] }
+    { "action": "accept", "src": ["group:admins"], "dst": ["*:*"] }
   ],
-
   "ssh": [
     {
       "action": "accept",
-      "src": ["tag:client"],
+      "src": ["group:admins"],
       "dst": ["tag:initrd"],
-      "users": ["autogroup:nonroot", "root"]
+      "users": ["root"]
     }
   ]
 }
 ```
 
-Even if an attacker obtains your initramfs node key, the ACLs above limit what
-that node can do and help protect the rest of your network.
+The `acls` rule lets your devices reach everything, the initrd node included,
+which [Tailscale SSH](https://tailscale.com/docs/features/tailscale-ssh) also needs;
+the `ssh` rule lets you log in to the node as root. Nothing lists `tag:initrd`
+as a source, so a stolen key gets a node that can be reached but cannot reach
+anything. See [Tailscale's access control
+documentation](https://tailscale.com/docs/features/access-control/acls) for the full syntax.
 
-If you suspect compromise:
+`setup-initcpio-tailscale` suggests tagging when the node comes out untagged,
+and `setup-initcpio-tailscale --check` warns when it is still untagged.
 
-- Remove the initrd device from the Tailscale admin console.
-- Re-run `setup-initcpio-tailscale` to register a fresh node and rebuild your
-  initramfs.
+If you suspect the key has been copied:
+
+- Remove the initrd node from the Machines page of the admin console.
+- Re-run `setup-initcpio-tailscale` to register a fresh node, then rebuild
+  your initramfs.
 
 ## Development
 
