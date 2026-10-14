@@ -115,6 +115,18 @@ declare -A SC_SETUP_ARGS=(
 	[dropbeartun]='--no-ssh --tun --netfilter-mode=off'
 	[luks]='--no-ssh'
 )
+# Scenarios registered with the tagged pre-auth key. Only one that runs its own
+# ssh server: the Tailscale SSH policy above grants logins to ci@'s nodes, and
+# a tagged node is no longer one of them. Network access still reaches it,
+# since the acls rule's destination is everything.
+declare -A SC_TAGGED=(
+	[dropbeartun]=1
+)
+# Scenarios whose setup runs without jq, which is only an optional dependency:
+# the helper cannot ask the node about its tags then, and has to say so.
+declare -A SC_NO_JQ=(
+	[busybox]=1
+)
 # Evidence from inside the guest that the hook ran, per branch: the unit on one
 # side, the runtime hook's own first line on the other.
 declare -A SC_CONSOLE=(
@@ -368,6 +380,13 @@ fi
 [[ -n $AUTHKEY ]] || die 'could not create a headscale pre-auth key'
 pass 'headscale issued a pre-auth key'
 
+# The README's example policy, with its placeholder login swapped for this
+# server's user, has to be one headscale accepts: the README says so.
+awk '/^## Security considerations/ { f = 1 } f && /^```json/ { g = 1; next } g && /^```/ { exit } g' \
+	"$REPO_ROOT/README.md" | sed 's/alice@example\.com/ci@/' >"$WORK/readme-policy.json"
+check "headscale accepts the README's example policy" \
+	hs policy set -f "$WORK/readme-policy.json"
+
 # Tailscale SSH is authorised by policy, not by keys, so without an ssh rule the
 # node would refuse every session no matter how healthy it is. Everything here
 # belongs to the single user 'ci', hence the user@ form on both sides; the login
@@ -375,6 +394,9 @@ pass 'headscale issued a pre-auth key'
 # which is also where the reason it cannot be root is written down.
 cat >"$WORK/policy.json" <<-EOF
 	{
+	  "tagOwners": {
+	    "tag:initrd": ["ci@"]
+	  },
 	  "acls": [
 	    { "action": "accept", "src": ["ci@"], "dst": ["*:*"] }
 	  ],
@@ -393,6 +415,18 @@ if hs policy set -f "$WORK/policy.json" >"$WORK/policy.log" 2>&1; then
 else
 	fail 'headscale accepted the ssh policy' "$(cat "$WORK/policy.log")"
 fi
+
+# A second key that tags whatever registers with it. headscale applies tags
+# only this way -- it refuses --advertise-tags at registration -- so this is
+# how a scenario gets the quarantined initrd node the README recommends. Created
+# after the policy, whose tagOwners entry is what permits the tag.
+TAGGED_AUTHKEY=$(hs preauthkeys create --user "$USER_ID" --reusable --expiration 24h \
+	--tags tag:initrd 2>/dev/null | tail -1)
+if [[ -z $TAGGED_AUTHKEY || $TAGGED_AUTHKEY == *rror* ]]; then
+	TAGGED_AUTHKEY=$(hs preauthkeys create --user ci --reusable --expiration 24h \
+		--tags tag:initrd 2>/dev/null | tail -1)
+fi
+[[ -n $TAGGED_AUTHKEY ]] || die 'could not create a tagged headscale pre-auth key'
 endgroup
 
 node_known() {
@@ -433,11 +467,16 @@ for sc in "${SCENARIOS[@]}"; do
 	# and 0755 because the daemon inside runs as nobody and has to reach it.
 	setup_tmp=$(mktemp -d /tmp/setup-tmp.XXXXXX)
 	chmod 755 "$setup_tmp"
+	sc_key=$AUTHKEY
+	[[ -n ${SC_TAGGED[$sc]:-} ]] && sc_key=$TAGGED_AUTHKEY
+	# Moved aside: jq sits in /usr/bin with everything else the helper needs,
+	# so no PATH can hide it alone. Safe in the throwaway container this runs in.
+	[[ -n ${SC_NO_JQ[$sc]:-} ]] && mv /usr/bin/jq /usr/bin/jq.hidden
 	# shellcheck disable=SC2086 # SC_SETUP_ARGS is meant to word-split
 	if TMPDIR="$setup_tmp" "$SETUP_HELPER" \
 		--hostname="$node" \
 		--login-server="$SERVER_URL" \
-		--authkey="$AUTHKEY" ${SC_SETUP_ARGS[$sc]} >"$WORK/setup.$sc.log" 2>&1; then
+		--authkey="$sc_key" ${SC_SETUP_ARGS[$sc]} >"$WORK/setup.$sc.log" 2>&1; then
 		pass "$sc: setup-initcpio-tailscale registers $node"
 	else
 		fail "$sc: setup-initcpio-tailscale registers $node" "$(cat "$WORK/setup.$sc.log")"
@@ -445,6 +484,7 @@ for sc in "${SCENARIOS[@]}"; do
 		exit 1
 	fi
 
+	[[ -e /usr/bin/jq.hidden ]] && mv /usr/bin/jq.hidden /usr/bin/jq
 	check "$sc: setup left no scratch directory behind" \
 		test -z "$(ls -A "$setup_tmp")"
 	check_fails "$sc: setup left no tailscaled running" \
@@ -459,6 +499,21 @@ for sc in "${SCENARIOS[@]}"; do
 	else
 		check_fails "$sc: the default netfilter mode prints no warning" \
 			grep -q 'netfilter=off; configure iptables yourself' "$WORK/setup.$sc.log"
+	fi
+
+	# The next steps ask the node itself whether it came out tagged: here the
+	# tag comes from the auth key, with no --advertise-tags anywhere.
+	if [[ -n ${SC_TAGGED[$sc]:-} ]]; then
+		check "$sc: setup reports the node as tagged" \
+			grep -q "'$node' is tagged tag:initrd" "$WORK/setup.$sc.log"
+		check_fails "$sc: and does not ask to disable key expiry" \
+			grep -q 'Disable key expiry' "$WORK/setup.$sc.log"
+	elif [[ -n ${SC_NO_JQ[$sc]:-} ]]; then
+		check "$sc: without jq setup says it cannot tell whether the node is tagged" \
+			grep -q "If '$node' is not tagged, consider tagging it" "$WORK/setup.$sc.log"
+	else
+		check "$sc: setup suggests tagging the untagged node" \
+			grep -q "Consider tagging '$node'" "$WORK/setup.$sc.log"
 	fi
 
 	check "$sc: setup wrote tailscaled.state" test -s "$TS_SETUPDIR/tailscaled.state"
@@ -665,6 +720,34 @@ else
 	fail 'the ssh client node joined the tailnet' \
 		"$(printf '%s\n%s' "$(cat "$WORK/client-up.log")" "$(tail -20 "$WORK/client.log")")"
 fi
+endgroup
+
+# --- --check reading the tailnet --------------------------------------------
+# --check asks the booted system's tailscale about the initrd node, through the
+# default socket. The client above is that system here: pointing the default
+# socket at it gives the check a real tailnet with real tags from headscale.
+group '--check reads tags and key expiry from the tailnet'
+install -d /run/tailscale
+ln -sfn "$CLIENT_SOCK" /run/tailscale/tailscaled.sock
+for sc in "${SCENARIOS[@]}"; do
+	node="${TS_NODE_NAME}-${SC_SUFFIX[$sc]}"
+	# The rest of the check looks at this host's configuration, which belongs
+	# to whichever scenario ran last; only the tailnet lines matter here.
+	"$SETUP_HELPER" --check --hostname="$node" >"$WORK/check-tailnet.$sc.log" 2>&1 || true
+	if [[ -n ${SC_TAGGED[$sc]:-} ]]; then
+		check "$sc: --check sees the tag" \
+			grep -q "OK .*'$node' is tagged tag:initrd" "$WORK/check-tailnet.$sc.log"
+		check "$sc: --check sees key expiry disabled for the tagged node" \
+			grep -q "OK .*key expiry is disabled for '$node'" "$WORK/check-tailnet.$sc.log"
+	else
+		check "$sc: --check warns that the node is untagged" \
+			grep -q "WARN .*'$node' carries no tag" "$WORK/check-tailnet.$sc.log"
+	fi
+done
+"$SETUP_HELPER" --check --hostname=no-such-initrd >"$WORK/check-tailnet.missing.log" 2>&1 || true
+check '--check says when the node is not among the peers' \
+	grep -q "WARN .*'no-such-initrd' is not among this tailnet's peers" "$WORK/check-tailnet.missing.log"
+rm -f /run/tailscale/tailscaled.sock
 endgroup
 
 # --- assertions that need a booted guest ----------------------------------
