@@ -249,6 +249,9 @@ if build_image 'base systemd tailscale'; then
 	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/override.conf '^Wants=network-online\.target$'
 	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/override.conf \
 		'^ExecStart=.* --tun=userspace-networking '
+	# The fixture's PORT="41641", baked in at build time.
+	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/override.conf \
+		'^ExecStart=.* --port=41641 '
 	# An absolute symlink target, so compare the link text -- following it would
 	# resolve against the host and pass even with the unit missing.
 	img_symlink "$ROOT" etc/systemd/system/sysinit.target.wants/tailscaled.service \
@@ -436,6 +439,29 @@ else
 fi
 endgroup
 
+# PORT left empty, or commented out as here, lets tailscaled choose its port.
+# The daemon refuses an empty --port=, so the flag has to disappear on both
+# branches rather than be passed blank; the boot test proves the result runs.
+group 'variant D4: PORT left empty'
+fixtures_write
+printf '#PORT="41641"\nTUN="tailscale0"\nFLAGS=""\n' >"$TS_SETUPDIR/default.env"
+if build_image 'base systemd tailscale'; then
+	pass 'D4: systemd build with PORT commented out'
+	snapshot
+	check_fails 'D4: the systemd unit passes no --port' \
+		grep -q -- '--port' "$ROOT/etc/systemd/system/tailscaled.service.d/override.conf"
+	# shellcheck disable=SC2016 # a literal $FLAGS, which systemd expands
+	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/override.conf \
+		'^ExecStart=.* --tun=tailscale0 \$FLAGS$'
+else
+	fail 'D4: systemd build with PORT commented out' "$(tail -30 "$LOG")"
+fi
+if build_image 'base udev tailscale'; then
+	pass 'D4: busybox build with PORT commented out'
+else
+	fail 'D4: busybox build with PORT commented out' "$(tail -30 "$LOG")"
+fi
+endgroup
 # --- variant D3: the CLI opt-in ---------------------------------------------
 group 'variant D3: CLI="yes" puts the tailscale CLI back'
 fixtures_write
@@ -492,6 +518,14 @@ assert_guard 'E: empty tailscaled.state' 'setup-initcpio-tailscale'
 fixtures_write
 rm -f "$TS_SETUPDIR/default.env"
 assert_guard 'F: missing default.env' 'default\.env'
+
+# A PORT tailscaled would refuse stops the build, not the boot.
+fixtures_write
+printf 'PORT="41641x"\nFLAGS=""\n' >"$TS_SETUPDIR/default.env"
+assert_guard 'F2: a PORT that is not a number' 'PORT="41641x".* is not a port number'
+fixtures_write
+printf 'PORT="65536"\nFLAGS=""\n' >"$TS_SETUPDIR/default.env"
+assert_guard 'F3: a PORT out of range' 'PORT="65536".* is not a port number'
 
 # The hook carries no guard of its own for tailscaled: the package depends on
 # tailscale, and mkinitcpio's add_binary errors and bumps _builderrors when the
