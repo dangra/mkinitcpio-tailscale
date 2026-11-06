@@ -243,14 +243,14 @@ if build_image 'base systemd tailscale'; then
 	assert_common A
 
 	img_has "$ROOT" usr/lib/systemd/system/tailscaled.service
-	img_has "$ROOT" etc/systemd/system/tailscaled.service.d/override.conf
-	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/override.conf '^DefaultDependencies=no$'
-	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/override.conf '^After=network-online\.target$'
-	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/override.conf '^Wants=network-online\.target$'
-	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/override.conf \
+	img_has "$ROOT" etc/systemd/system/tailscaled.service.d/mkinitcpio-tailscale.conf
+	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/mkinitcpio-tailscale.conf '^DefaultDependencies=no$'
+	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/mkinitcpio-tailscale.conf '^After=network-online\.target$'
+	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/mkinitcpio-tailscale.conf '^Wants=network-online\.target$'
+	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/mkinitcpio-tailscale.conf \
 		'^ExecStart=.* --tun=userspace-networking '
 	# The fixture's PORT="41641", baked in at build time.
-	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/override.conf \
+	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/mkinitcpio-tailscale.conf \
 		'^ExecStart=.* --port=41641 '
 	# An absolute symlink target, so compare the link text -- following it would
 	# resolve against the host and pass even with the unit missing.
@@ -318,7 +318,7 @@ if build_image 'base udev tailscale'; then
 	fi
 
 	img_lacks "$ROOT" usr/lib/systemd/system/tailscaled.service
-	img_lacks "$ROOT" etc/systemd/system/tailscaled.service.d/override.conf
+	img_lacks "$ROOT" etc/systemd/system/tailscaled.service.d/mkinitcpio-tailscale.conf
 
 	# No stock busybox-side hook writes a user database, so the hook supplies
 	# one: tailscaled resolves the SSH login through it, and so does any dropbear
@@ -425,7 +425,7 @@ if build_image 'base systemd tailscale'; then
 	pass 'D2: systemd build with TUN=tailscale0'
 	snapshot
 	assert_common D2 tun
-	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/override.conf \
+	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/mkinitcpio-tailscale.conf \
 		'^ExecStart=.* --tun=tailscale0 '
 else
 	fail 'D2: systemd build with TUN=tailscale0' "$(tail -30 "$LOG")"
@@ -449,9 +449,9 @@ if build_image 'base systemd tailscale'; then
 	pass 'D4: systemd build with PORT commented out'
 	snapshot
 	check_fails 'D4: the systemd unit passes no --port' \
-		grep -q -- '--port' "$ROOT/etc/systemd/system/tailscaled.service.d/override.conf"
+		grep -q -- '--port' "$ROOT/etc/systemd/system/tailscaled.service.d/mkinitcpio-tailscale.conf"
 	# shellcheck disable=SC2016 # a literal $FLAGS, which systemd expands
-	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/override.conf \
+	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/mkinitcpio-tailscale.conf \
 		'^ExecStart=.* --tun=tailscale0 \$FLAGS$'
 else
 	fail 'D4: systemd build with PORT commented out' "$(tail -30 "$LOG")"
@@ -461,6 +461,28 @@ if build_image 'base udev tailscale'; then
 else
 	fail 'D4: busybox build with PORT commented out' "$(tail -30 "$LOG")"
 fi
+endgroup
+
+# add_systemd_unit copies the host's tailscaled drop-ins into the image, and
+# `systemctl edit tailscaled` names one override.conf. Had the hook's drop-in
+# the same name, mkinitcpio's add_file would cmp the piped text against the
+# host's copy before installing it, drain the pipe, and leave an empty file:
+# tailscaled then waits for sysinit.target, which waits for the unlock.
+group 'variant D5: a host drop-in named override.conf'
+fixtures_write
+HOST_DROPIN=/etc/systemd/system/tailscaled.service.d/override.conf
+[[ -e $HOST_DROPIN ]] && mv "$HOST_DROPIN" "$WORK/host-override.conf"
+install -Dm644 /dev/stdin "$HOST_DROPIN" <<<$'[Service]\nEnvironment=TS_DEBUG_FIREWALL_MODE=nftables'
+if build_image 'base systemd tailscale'; then
+	pass 'D5: systemd build with a host override.conf'
+	snapshot
+	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/mkinitcpio-tailscale.conf '^DefaultDependencies=no$'
+	img_grep "$ROOT" etc/systemd/system/tailscaled.service.d/override.conf '^Environment=TS_DEBUG_FIREWALL_MODE=nftables$'
+else
+	fail 'D5: systemd build with a host override.conf' "$(tail -30 "$LOG")"
+fi
+rm -f "$HOST_DROPIN"
+[[ -e $WORK/host-override.conf ]] && mv "$WORK/host-override.conf" "$HOST_DROPIN"
 endgroup
 # --- variant D3: the CLI opt-in ---------------------------------------------
 group 'variant D3: CLI="yes" puts the tailscale CLI back'
